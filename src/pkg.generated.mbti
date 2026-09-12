@@ -1,0 +1,50 @@
+// Generated using `moon info`, DON'T EDIT IT
+package "colmugx/fuwaroid"
+
+import {
+  "moonbitlang/async",
+  "moonbitlang/async/aqueue",
+  "moonbitlang/core/debug",
+}
+
+// Values
+
+// Errors
+pub(all) suberror StoppedError {
+  StoppedError
+}
+
+// Types and methods
+pub(all) enum AskFailure {
+  NotDelivered(SendRefusal)
+  TimedOut
+  Stopped
+} derive(Eq, @debug.Debug)
+
+pub struct Ctx[Cmd, Query, Reply] {
+  group : @async.TaskGroup[Unit]
+  address : Fuwaroid[Cmd, Query, Reply]
+}
+
+pub enum Envelope[Cmd, Query, Reply] {
+  Tell(Cmd)
+  Ask(Query, @aqueue.Queue[Reply])
+}
+
+pub struct Fuwaroid[Cmd, Query, Reply] {
+  // private fields
+}
+pub async fn[Cmd, Query, Reply] Fuwaroid::ask(Self[Cmd, Query, Reply], Query, timeout_ms~ : Int) -> Result[Reply, AskFailure]
+pub fn[Cmd, Query, Reply] Fuwaroid::close(Self[Cmd, Query, Reply]) -> Unit
+pub fn[State, Cmd, Query, Reply] Fuwaroid::spawn(group~ : @async.TaskGroup[Unit], init~ : State, on_cmd~ : (Ctx[Cmd, Query, Reply], State, Cmd) -> State, on_query~ : (Ctx[Cmd, Query, Reply], State, Query) -> (State, Reply), mailbox? : @aqueue.Kind) -> Self[Cmd, Query, Reply]
+pub fn[State, Cmd] Fuwaroid::spawn_fold(group~ : @async.TaskGroup[Unit], init~ : State, on_cmd~ : (Ctx[Cmd, Cmd, Unit], State, Cmd) -> State, mailbox? : @aqueue.Kind) -> Self[Cmd, Cmd, Unit]
+pub fn[Cmd, Query, Reply] Fuwaroid::tell(Self[Cmd, Query, Reply], Cmd) -> Result[Unit, SendRefusal]
+
+pub(all) enum SendRefusal {
+  MailboxClosed
+  MailboxFull
+} derive(Eq, @debug.Debug)
+
+// Type aliases
+
+// Traits

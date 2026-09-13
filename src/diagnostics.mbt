@@ -1,10 +1,9 @@
 ///|
 /// Lifecycle phase of a Fuwaroid's loop. Phases
-/// only move FORWARD: `Running` → `Closing` (a `close` was requested) →
-/// `Stopped` (the unified stop/cleanup path completed). An abnormal stop —
-/// host cancellation observed at a yield/`get` boundary, or another
-/// terminal mailbox error — may jump straight from `Running` or `Closing`
-/// to `Stopped`, carrying the recorded `StopReason`. The phase never moves
+/// only move FORWARD: `Running` → `Closing` (admission was closed) →
+/// `Stopped` (the unified stop/cleanup path completed). An abnormal stop
+/// closes admission and enters `Closing` before yielding during cleanup;
+/// `Stopped` carries the recorded `StopReason` after cleanup. The phase never moves
 /// backwards: a late `close` cannot un-stop an instance, and a second
 /// `close` cannot leave `Closing` once `Stopped` was reached.
 pub(all) enum Lifecycle {
@@ -115,30 +114,14 @@ fn Diag::transition(self : Diag, next : Lifecycle) -> Unit {
 pub fn[Cmd, Query, Reply] Fuwaroid::snapshot(
   self : Fuwaroid[Cmd, Query, Reply],
 ) -> Snapshot {
-  match self.stop {
-    Some(cell) => {
-      let d = cell.diag
-      {
-        lifecycle: d.lifecycle,
-        accepted: d.accepted,
-        processed: d.processed,
-        rejected_full: d.rejected_full,
-        rejected_closed: d.rejected_closed,
-        abandoned: d.abandoned,
-        outstanding: d.accepted - d.processed - d.abandoned,
-      }
-    }
-    // A handle not obtained from `spawn` (white-box construction) has no
-    // loop and no recorded diagnostics: report the zero-valued Running view.
-    None =>
-      {
-        lifecycle: Running,
-        accepted: 0L,
-        processed: 0L,
-        rejected_full: 0L,
-        rejected_closed: 0L,
-        abandoned: 0L,
-        outstanding: 0L,
-      }
+  let d = self.stop.diag
+  {
+    lifecycle: d.lifecycle,
+    accepted: d.accepted,
+    processed: d.processed,
+    rejected_full: d.rejected_full,
+    rejected_closed: d.rejected_closed,
+    abandoned: d.abandoned,
+    outstanding: d.accepted - d.processed - d.abandoned,
   }
 }

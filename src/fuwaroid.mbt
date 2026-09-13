@@ -40,11 +40,8 @@
 ///   in-flight work require.
 pub struct Fuwaroid[Cmd, Query, Reply] {
   priv mailbox : @aqueue.Queue[Envelope[Cmd, Query, Reply]]
-  /// This instance's loop stop record (loop task handle, termination
-  /// reason, secondary cleanup evidence). `None` only for handles built
-  /// directly (white-box, same package) without `spawn`: such a handle
-  /// has no loop of its own.
-  priv stop : LoopStop?
+  /// Every handle shares its loop's stop record and diagnostics.
+  priv stop : LoopStop
 }
 
 ///|
@@ -120,7 +117,7 @@ pub(all) suberror StoppedError {
 /// after — or while — waiting on the loop task.
 priv struct LoopStop {
   /// Why the loop terminated (written once, by `fuwaroid_cleanup`).
-  mut reason : StopReason
+  mut reason : StopReason?
   /// Secondary failure evidence: if the cleanup itself fails (e.g. a
   /// foreign drain error) while an original stop cause exists, the
   /// original cause still wins propagation and the secondary failure is
@@ -177,7 +174,7 @@ fn mailbox_capacity_error(n : Int) -> String? {
 
 ///|
 fn LoopStop::fresh() -> LoopStop {
-  { reason: Graceful, cleanup_error: None, task: None, diag: Diag::fresh(), }
+  { reason: None, cleanup_error: None, task: None, diag: Diag::fresh(), }
 }
 
 ///|
@@ -210,16 +207,15 @@ pub fn[State, Cmd, Query, Reply] Fuwaroid::spawn(
   }
   let queue : @aqueue.Queue[Envelope[Cmd, Query, Reply]] = @aqueue.Queue(kind~)
   let stop : LoopStop = LoopStop::fresh()
-  let fuwaroid : Fuwaroid[Cmd, Query, Reply] = {
-    mailbox: queue,
-    stop: Some(stop),
-  }
+  let fuwaroid : Fuwaroid[Cmd, Query, Reply] = { mailbox: queue, stop, }
   let ctx : Ctx[Cmd, Query, Reply] = { group, address: fuwaroid, }
   // TaskGroup::spawn (not spawn_bg) so the loop task handle exists for
   // termination waiters (`join`); no_wait stays true: the host group does
   // not wait for the loop, it cancels it when the scope ends.
   // allow_failure keeps its default (false): a cleanup-path bug that lets
   // a non-cancellation error escape still fails the host group.
+  // spawn and task installation have no suspension between them; no
+  // caller can observe this bootstrap-only empty task slot.
   let task = group.spawn(no_wait=true, () => {
     fuwaroid_loop(ctx, init, on_cmd, on_query, queue, stop~)
   })
@@ -286,7 +282,7 @@ async fn[State, Cmd, Query, Reply] fuwaroid_loop(
   on_cmd : (Ctx[Cmd, Query, Reply], State, Cmd) -> State,
   on_query : (Ctx[Cmd, Query, Reply], State, Query) -> (State, Reply),
   queue : @aqueue.Queue[Envelope[Cmd, Query, Reply]],
-  stop? : LoopStop = LoopStop::fresh(),
+  stop~ : LoopStop,
 ) -> Unit {
   let mut state = init
   let mut served_in_batch = 0
@@ -349,21 +345,22 @@ async fn[State, Cmd, Query, Reply] fuwaroid_loop(
 ///    itself failed; an abnormal stop re-raises the ORIGINAL cause — the
 ///    cleanup error never replaces it (a cancelled loop task keeps the
 ///    cancellation identity; a foreign stop error stays observable).
-fn[Cmd, Query, Reply] fuwaroid_cleanup(
+async fn[Cmd, Query, Reply] fuwaroid_cleanup(
   queue : @aqueue.Queue[Envelope[Cmd, Query, Reply]],
   cause : Error?,
   stop : LoopStop,
-) -> Unit raise {
+) -> Unit {
   // The default close error is intentional: it only decides what NEW
   // attempts to touch the mailbox see; the original stop cause is
   // retained below and stranded asks get `StoppedError` in step 2.
   queue.close()
+  stop.diag.transition(Closing)
   // Counting point: every envelope the stranded-ask drain removes
   // was accepted but is provably unserved — commands and queries alike
-  // are counted as abandoned (the drain runs in one uninterrupted
-  // scheduling turn, so nothing can be admitted or served in between).
+  // are counted as abandoned. Admission is closed before any yield.
+  // Shield the whole drain so cancellation cannot strand remaining asks.
   let drained : Result[Unit, Error] = Ok(
-    fail_leftover_asks(queue, diag=stop.diag),
+    @async.protect_from_cancel(() => fail_leftover_asks(queue, diag=stop.diag)),
   ) catch {
     error => Err(error)
   }
@@ -375,7 +372,7 @@ fn[Cmd, Query, Reply] fuwaroid_cleanup(
     // Graceful: closed-and-empty drain completed (or the loop exited
     // without a cause — same disposition).
     Some(@aqueue.QueueAlreadyClosed) | None => {
-      stop.reason = Graceful
+      stop.reason = Some(Graceful)
       stop.cleanup_error = secondary
       // Counting point: the unified cleanup is complete — the phase
       // moves to Stopped carrying the recorded reason (forward-only).
@@ -388,7 +385,7 @@ fn[Cmd, Query, Reply] fuwaroid_cleanup(
     // Abnormal: keep the original error identity; the secondary cleanup
     // failure is preserved as evidence, never used as the replacement.
     Some(original) => {
-      stop.reason = Stopped(original)
+      stop.reason = Some(Stopped(original))
       stop.cleanup_error = secondary
       // Counting point: the unified cleanup is complete — the phase
       // moves to Stopped carrying the recorded reason (forward-only);
@@ -412,11 +409,12 @@ fn[Cmd, Query, Reply] fuwaroid_cleanup(
 /// drain is the exact truncation point between "accepted and served" and
 /// "accepted but unserved". Direct white-box callers that pass
 /// no cell only get the draining behavior.
-fn[Cmd, Query, Reply] fail_leftover_asks(
+async fn[Cmd, Query, Reply] fail_leftover_asks(
   queue : @aqueue.Queue[Envelope[Cmd, Query, Reply]],
   diag? : Diag,
-) -> Unit raise {
+) -> Unit {
   let mut draining = true
+  let mut drained_in_batch = 0
   while draining {
     let next : Result[Envelope[Cmd, Query, Reply]?, Error] = Ok(queue.try_get()) catch {
       error => Err(error)
@@ -437,6 +435,13 @@ fn[Cmd, Query, Reply] fail_leftover_asks(
       Ok(None) => draining = false
       Err(@aqueue.QueueAlreadyClosed) => draining = false
       Err(error) => raise error
+    }
+    if draining {
+      drained_in_batch += 1
+      if drained_in_batch >= fuwaroid_yield_batch {
+        drained_in_batch = 0
+        @async.pause()
+      }
     }
   }
 }
@@ -460,26 +465,17 @@ pub fn[Cmd, Query, Reply] Fuwaroid::tell(
   match delivered {
     Ok(true) => {
       // Counting point: admission accepted.
-      match self.stop {
-        Some(cell) => cell.diag.accepted = cell.diag.accepted + 1L
-        None => ()
-      }
+      self.stop.diag.accepted += 1L
       Ok(())
     }
     Ok(false) => {
       // Counting point: admission refused, mailbox full.
-      match self.stop {
-        Some(cell) => cell.diag.rejected_full = cell.diag.rejected_full + 1L
-        None => ()
-      }
+      self.stop.diag.rejected_full += 1L
       Err(SendRefusal::MailboxFull)
     }
     Err(_) => {
       // Counting point: admission refused, mailbox closed.
-      match self.stop {
-        Some(cell) => cell.diag.rejected_closed = cell.diag.rejected_closed + 1L
-        None => ()
-      }
+      self.stop.diag.rejected_closed += 1L
       Err(SendRefusal::MailboxClosed)
     }
   }
@@ -519,24 +515,15 @@ pub async fn[Cmd, Query, Reply] Fuwaroid::ask(
   match delivered {
     Ok(true) =>
       // Counting point: admission accepted (queries count too).
-      match self.stop {
-        Some(cell) => cell.diag.accepted = cell.diag.accepted + 1L
-        None => ()
-      }
+      self.stop.diag.accepted += 1L
     Ok(false) => {
       // Counting point: admission refused, mailbox full.
-      match self.stop {
-        Some(cell) => cell.diag.rejected_full = cell.diag.rejected_full + 1L
-        None => ()
-      }
+      self.stop.diag.rejected_full += 1L
       return Err(AskFailure::NotDelivered(SendRefusal::MailboxFull))
     }
     Err(_) => {
       // Counting point: admission refused, mailbox closed.
-      match self.stop {
-        Some(cell) => cell.diag.rejected_closed = cell.diag.rejected_closed + 1L
-        None => ()
-      }
+      self.stop.diag.rejected_closed += 1L
       return Err(AskFailure::NotDelivered(SendRefusal::MailboxClosed))
     }
   }
@@ -576,10 +563,7 @@ pub fn[Cmd, Query, Reply] Fuwaroid::close(
   self : Fuwaroid[Cmd, Query, Reply],
 ) -> Unit {
   // Counting point: the close REQUEST moves Running → Closing.
-  match self.stop {
-    Some(cell) => cell.diag.transition(Closing)
-    None => ()
-  }
+  self.stop.diag.transition(Closing)
   self.mailbox.close()
 }
 
@@ -597,17 +581,16 @@ pub fn[Cmd, Query, Reply] Fuwaroid::close(
 ///   which the unified stop path records before re-raising the cancel
 ///   identity, so a joiner that is NOT itself cancelled observes
 ///   `Stopped(cancel error)` instead of the raw cancellation.
-/// - If the WAITER itself is cancelled, that cancellation propagates: the
-///   caught wait error is re-raised after checking
-///   `@async.is_being_cancelled()`, never converted into a `StopReason`.
+/// - If the WAITER itself is cancelled, that cancellation propagates,
+///   including when the loop already terminated. Cancellation is checked
+///   before waiting as well as when a wait error is caught.
 /// - Fallback boundary: a task failure whose recorded
-///   reason is still `Graceful` means an error escaped outside the
+///   reason is absent or `Graceful` means an error escaped outside the
 ///   recorded original cause — the recorded secondary cleanup evidence is
 ///   mapped to `Stopped` when present (the task did fail; the evidence
 ///   must not vanish), and the escaped error itself otherwise (only
 ///   reachable through a cleanup-path bug).
-/// - A handle not obtained from `spawn` (white-box construction) has no
-///   loop of its own; `join` returns `Graceful` immediately for it.
+/// - A missing internal task is an invariant violation and aborts.
 ///
 /// Note: when the loop task fails with a NON-cancellation error, the
 /// host task group's fail-fast still applies independently of `join` —
@@ -616,26 +599,33 @@ pub fn[Cmd, Query, Reply] Fuwaroid::close(
 pub async fn[Cmd, Query, Reply] Fuwaroid::join(
   self : Fuwaroid[Cmd, Query, Reply],
 ) -> StopReason {
-  let cell = match self.stop {
-    Some(cell) => cell
-    None => return Graceful
+  // Task::wait skips cancellation checks for already completed tasks.
+  // Obtain the runtime's cancellation error before taking that fast path.
+  if @async.is_being_cancelled() {
+    @async.pause()
   }
+  let cell = self.stop
   let task = match cell.task {
     Some(task) => task
-    None => return Graceful
+    None => abort("fuwaroid: join before loop task initialization")
   }
   let outcome : Result[Unit, Error] = Ok(task.wait()) catch {
     error => Err(error)
   }
   match outcome {
-    Ok(_) => cell.reason
+    Ok(_) =>
+      match cell.reason {
+        Some(reason) => reason
+        None =>
+          abort("fuwaroid: loop completed without recording its stop reason")
+      }
     Err(error) =>
       if @async.is_being_cancelled() {
         raise error
       } else {
         match cell.reason {
-          Stopped(_) => cell.reason
-          Graceful =>
+          Some(Stopped(_) as reason) => reason
+          Some(Graceful) | None =>
             match cell.cleanup_error {
               Some(secondary) => Stopped(secondary)
               None => Stopped(error)

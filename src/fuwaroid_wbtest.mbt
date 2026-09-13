@@ -53,6 +53,7 @@ async fn counter_loop(
     },
     (_, state, _query) => (state, state.count),
     queue,
+    stop=ctx.address.stop,
   )
 }
 
@@ -151,7 +152,7 @@ async test "cancelled actor closes its handle" {
     )
     let fuwaroid : Fuwaroid[CounterCmd, CounterQuery, Int] = {
       mailbox: queue,
-      stop: None,
+      stop: LoopStop::fresh(),
     }
     let ctx : Ctx[CounterCmd, CounterQuery, Int] = { group, address: fuwaroid, }
     let loop_task = group.spawn(() => counter_loop(ctx, queue))
@@ -184,7 +185,7 @@ async test "queued ask and loop cancellation close the public handle" {
     )
     let fuwaroid : Fuwaroid[CounterCmd, CounterQuery, Int] = {
       mailbox: queue,
-      stop: None,
+      stop: LoopStop::fresh(),
     }
     let ctx : Ctx[CounterCmd, CounterQuery, Int] = { group, address: fuwaroid, }
 
@@ -235,7 +236,7 @@ async test "queued ask and loop cancellation close the public handle" {
 async test "full bounded mailbox reports MailboxFull" {
   let fuwaroid : Fuwaroid[CounterCmd, CounterQuery, Int] = {
     mailbox: @aqueue.Queue(kind=@aqueue.Blocking(1)),
-    stop: None,
+    stop: LoopStop::fresh(),
   }
   debug_inspect(fuwaroid.tell(CounterCmd::Add(1)), content="Ok(())")
   debug_inspect(fuwaroid.tell(CounterCmd::Add(2)), content="Err(MailboxFull)")
@@ -247,7 +248,7 @@ async test "full bounded mailbox reports MailboxFull" {
 async test "unserved ask times out" {
   let fuwaroid : Fuwaroid[CounterCmd, CounterQuery, Int] = {
     mailbox: @aqueue.Queue(kind=@aqueue.Unbounded),
-    stop: None,
+    stop: LoopStop::fresh(),
   }
   let outcome = fuwaroid.ask(CounterQuery::GetCount, timeout_ms=10)
   debug_inspect(outcome, content="Err(TimedOut)")
@@ -285,7 +286,7 @@ async test "foreign mailbox error propagates" {
     queue.close(error=ForeignError)
     let fuwaroid : Fuwaroid[CounterCmd, CounterQuery, Int] = {
       mailbox: queue,
-      stop: None,
+      stop: LoopStop::fresh(),
     }
     let ctx : Ctx[CounterCmd, CounterQuery, Int] = { group, address: fuwaroid, }
     let outcome : Result[Unit, Error] = Ok(counter_loop(ctx, queue)) catch {
@@ -302,7 +303,7 @@ async test "foreign mailbox error propagates" {
 ///|
 /// `fail_leftover_asks` also propagates a foreign drain error instead of
 /// treating it as an empty mailbox.
-test "foreign drain error propagates" {
+async test "foreign drain error propagates" {
   let queue : @aqueue.Queue[Envelope[CounterCmd, CounterQuery, Int]] = @aqueue.Queue(
     kind=@aqueue.Unbounded,
   )
@@ -431,7 +432,7 @@ async test "T15 stop reason keeps its original identity through cleanup and join
     let stop : LoopStop = LoopStop::fresh()
     let fuwaroid : Fuwaroid[CounterCmd, CounterQuery, Int] = {
       mailbox: queue,
-      stop: Some(stop),
+      stop,
     }
     let ctx : Ctx[CounterCmd, CounterQuery, Int] = { group, address: fuwaroid, }
     let task = group.spawn(allow_failure=true, () => {
@@ -496,7 +497,7 @@ async test "T15 stop reason keeps its original identity through cleanup and join
     let stop : LoopStop = LoopStop::fresh()
     let fuwaroid : Fuwaroid[CounterCmd, CounterQuery, Int] = {
       mailbox: queue,
-      stop: Some(stop),
+      stop,
     }
     let ctx : Ctx[CounterCmd, CounterQuery, Int] = { group, address: fuwaroid, }
     let task = group.spawn(() => {
@@ -530,8 +531,8 @@ async test "T15 stop reason keeps its original identity through cleanup and join
     }
     // The recorded reason keeps the ORIGINAL cancellation identity.
     match stop.reason {
-      Stopped(error) => assert_true(@async.is_cancellation_error(error))
-      Graceful =>
+      Some(Stopped(error)) => assert_true(@async.is_cancellation_error(error))
+      Some(Graceful) | None =>
         fail("T15b: the recorded reason is Graceful for a cancelled loop")
     }
     // The stranded ask's reply queue was closed with the stop marker by the
@@ -583,5 +584,114 @@ test "mailbox_capacity_error accepts only positive Bounded capacities" {
         )
       None => ()
     }
+  }
+}
+
+///|
+async test "cancelled joiner propagates cancellation after loop completion" {
+  @async.with_task_group(group => {
+    let actor : Fuwaroid[Unit, Unit, Unit] = Fuwaroid::spawn_fold(
+      group~,
+      init=(),
+      on_cmd=(_, _, _) => (),
+    )
+    actor.close()
+    guard actor.join() is Graceful else { fail("expected graceful stop") }
+    let checked = Ref(false)
+    let waiter = group.spawn(() => {
+      assert_true(@async.is_being_cancelled())
+      let result : Result[StopReason, Error] = Ok(actor.join()) catch {
+        error => Err(error)
+      }
+      match result {
+        Err(error) => assert_true(@async.is_cancellation_error(error))
+        Ok(_) => fail("cancelled join returned a stop reason")
+      }
+      checked.val = true
+    })
+    waiter.cancel()
+    waiter.wait()
+    assert_true(checked.val)
+    guard actor.join() is Graceful else { fail("waiter changed actor outcome") }
+  })
+}
+
+///|
+async test "cancelled cleanup yields with admission closed and settles every ask" {
+  @async.with_task_group(group => {
+    let queue : @aqueue.Queue[Envelope[CounterCmd, CounterQuery, Int]] = @aqueue.Queue(
+      kind=@aqueue.Unbounded,
+    )
+    let stop = LoopStop::fresh()
+    let actor : Fuwaroid[CounterCmd, CounterQuery, Int] = {
+      mailbox: queue,
+      stop,
+    }
+    let ctx : Ctx[CounterCmd, CounterQuery, Int] = { group, address: actor, }
+    for _ in 0..<fuwaroid_yield_batch {
+      assert_eq(actor.tell(Add(1)), Ok(()))
+    }
+    let replies : Array[@aqueue.Queue[Int]] = []
+    for _ in 0..<(fuwaroid_yield_batch * 4) {
+      let reply = @aqueue.Queue(kind=@aqueue.Unbounded)
+      assert_true(queue.try_put(Ask(GetCount, reply)))
+      stop.diag.accepted += 1L
+      replies.push(reply)
+    }
+    let task = group.spawn(() => counter_loop(ctx, queue))
+    stop.task = Some(task)
+    task.cancel()
+    let mut observed_partial = false
+    for _ in 0..<100 {
+      let snapshot = actor.snapshot()
+      if snapshot.abandoned > 0L && snapshot.outstanding > 0L {
+        guard snapshot.lifecycle is Closing else {
+          fail("cleanup must publish Closing before yielding")
+        }
+        assert_eq(actor.tell(Add(1)), Err(MailboxClosed))
+        observed_partial = true
+        break
+      }
+      @async.pause()
+    }
+    assert_true(observed_partial, msg="cleanup monopolized the scheduler")
+    let reason = actor.join()
+    match reason {
+      Stopped(error) => assert_true(@async.is_cancellation_error(error))
+      Graceful => fail("cancelled cleanup lost original cause")
+    }
+    for reply in replies {
+      let outcome : Result[Int, Error] = Ok(reply.get()) catch {
+        error => Err(error)
+      }
+      guard outcome is Err(StoppedError) else {
+        fail("stranded ask was not closed")
+      }
+    }
+    let final_snapshot = actor.snapshot()
+    assert_eq(final_snapshot.processed, fuwaroid_yield_batch.to_int64())
+    assert_eq(final_snapshot.abandoned, (fuwaroid_yield_batch * 4).to_int64())
+    assert_eq(final_snapshot.outstanding, 0L)
+    guard final_snapshot.lifecycle is Stopped(Stopped(_)) else {
+      fail("cleanup did not publish abnormal terminal state")
+    }
+  })
+}
+
+///|
+test "fresh stop record has no fabricated termination and tracks admissions" {
+  let stop = LoopStop::fresh()
+  guard stop.reason is None else {
+    fail("fresh loop already has a stop reason")
+  }
+  let actor : Fuwaroid[Unit, Unit, Unit] = {
+    mailbox: @aqueue.Queue(kind=@aqueue.Unbounded),
+    stop,
+  }
+  assert_eq(actor.tell(()), Ok(()))
+  assert_eq(actor.snapshot().accepted, 1L)
+  actor.close()
+  guard actor.snapshot().lifecycle is Closing else {
+    fail("missing real lifecycle")
   }
 }

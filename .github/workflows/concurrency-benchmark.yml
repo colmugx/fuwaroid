@@ -36,7 +36,7 @@ jobs:
           moon test --target native --output-json
       - name: Measure release workloads and write report
         timeout-minutes: 25
-        run: moon run tools/concurrency-ci.mbtx --target native
+        run: moon run tools/concurrency-ci.mbtx
       - name: Preserve report and raw evidence, including failures
         if: always()
         uses: actions/upload-artifact@v4

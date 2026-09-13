@@ -28,17 +28,15 @@ jobs:
         with:
           version: ${{ inputs.toolchain || '0.10.12+1634b282e' }}
           core-version: ${{ inputs.toolchain || '0.10.12+1634b282e' }}
-      - name: Install RTK proxy
-        run: cargo install --git https://github.com/rtk-ai/rtk --branch master --locked rtk
       - name: Resolve dependencies
-        run: rtk proxy moon update
+        run: moon update
       - name: Check and test
         run: |
-          rtk proxy moon check --target native --output-json
-          rtk proxy moon test --target native --output-json
+          moon check --target native --output-json
+          moon test --target native --output-json
       - name: Measure release workloads and write report
         timeout-minutes: 25
-        run: rtk proxy moon run tools/concurrency-ci.mbtx
+        run: moon run tools/concurrency-ci.mbtx --target native
       - name: Preserve report and raw evidence, including failures
         if: always()
         uses: actions/upload-artifact@v4

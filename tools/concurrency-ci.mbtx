@@ -1,6 +1,6 @@
 /// Reproducible CI campaign: release executable, serial independent processes,
 /// bounded workloads, raw evidence retained before validating each result.
-/// Usage: rtk proxy moon run tools/concurrency-ci.mbtx [smoke]
+/// Usage: moon run tools/concurrency-ci.mbtx [smoke]
 import {
   "moonbitlang/async",
   "moonbitlang/async/fs",
@@ -111,7 +111,7 @@ async fn main {
   persist(report.to_string())
   let outcome : Result[Unit, Error] = Ok({
     let environment = StringBuilder()
-    for (program, argv) in [("git", ["rev-parse", "HEAD"]), ("git", ["status", "--porcelain"]), ("rtk", ["proxy", "moon", "version", "--all"]), ("rtk", ["--version"]), ("uname", ["-a"])] {
+    for (program, argv) in [("git", ["rev-parse", "HEAD"]), ("git", ["status", "--porcelain"]), ("moon", ["version", "--all"]), ("uname", ["-a"])] {
       environment <+ "$ \{program} \{argv.join(" ")}\n"
       environment <+ "\{command(program, argv)}\n"
     }
@@ -125,9 +125,9 @@ async fn main {
     environment <+ "\nmoon.mod:\n\{@fs.read_file("moon.mod").text()}"
     @fs.write_file("benchmark-results/environment.txt", environment.to_string())
     // The resolved dependency graph is evidence, not just the declared pin.
-    @fs.write_file("benchmark-results/dependencies.txt", command("rtk", ["proxy", "moon", "tree"]))
+    @fs.write_file("benchmark-results/dependencies.txt", command("moon", ["tree"]))
     report <+ "Environment and resolved dependencies: `environment.txt`, `dependencies.txt`.\n\n"
-    @fs.write_file("benchmark-results/build.txt", command("rtk", ["proxy", "moon", "build", "src/bench", "--target", "native", "--release", "--output-json"]))
+    @fs.write_file("benchmark-results/build.txt", command("moon", ["proxy", "moon", "build", "src/bench", "--target", "native", "--release", "--output-json"]))
     let _ = execute("smoke", ["smoke"])
     let values : Map[String, Array[Double]] = Map([])
     for scenario in scenarios { values[scenario.name] = [] }

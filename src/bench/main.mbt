@@ -7,9 +7,6 @@
 ///
 /// Invocation (parameters reach the program through `@env.args()`):
 ///
-/// ```text
-/// rtk proxy moon run src/bench --target native <workload> [key=value ...]
-/// ```
 ///
 /// Workloads: `selftest`, `smoke`, `tell`, `ask`, `hotcold`, `producers`,
 /// `handler`. Orchestration (scenario table, batch-variant isolated copies,

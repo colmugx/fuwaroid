@@ -127,7 +127,7 @@ async fn main {
     // The resolved dependency graph is evidence, not just the declared pin.
     @fs.write_file("benchmark-results/dependencies.txt", command("moon", ["tree"]))
     report <+ "Environment and resolved dependencies: `environment.txt`, `dependencies.txt`.\n\n"
-    @fs.write_file("benchmark-results/build.txt", command("moon", ["proxy", "moon", "build", "src/bench", "--target", "native", "--release", "--output-json"]))
+    @fs.write_file("benchmark-results/build.txt", command("moon", ["build", "src/bench", "--target", "native", "--release", "--output-json"]))
     let _ = execute("smoke", ["smoke"])
     let values : Map[String, Array[Double]] = Map([])
     for scenario in scenarios { values[scenario.name] = [] }

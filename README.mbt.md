@@ -220,7 +220,12 @@ async test "close then join" {
   closed-and-empty drain, `Stopped(original error)` after an abnormal stop
   (host cancellation keeps its original error identity). Multiple waiters
   are fine, and a `join` after termination returns immediately. If the
-  waiter itself is cancelled, that cancellation propagates unchanged.
+  waiter itself is cancelled, that cancellation propagates unchanged,
+  including when the loop has already terminated.
+- Abnormal cleanup closes admission and enters `Closing`, then abandons
+  queued messages in batches of 32 under cancellation protection. It yields
+  between batches so other tasks can run; `join` completes only after all
+  stranded reply queues are closed and the stop reason is recorded.
 - **Cancellation outranks draining.** The loop is spawned `no_wait` on the
   host group. `close()` followed by an *immediate* return from the host
   scope cancels the still-running loop — the backlog is NOT fully

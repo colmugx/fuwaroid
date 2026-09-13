@@ -1,0 +1,13 @@
+// Generated using `moon info`, DON'T EDIT IT
+package "colmugx/fuwaroid/bench"
+
+// Values
+
+// Errors
+
+// Types and methods
+type HotCmd derive(Eq)
+
+// Type aliases
+
+// Traits

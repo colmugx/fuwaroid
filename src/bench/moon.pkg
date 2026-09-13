@@ -1,0 +1,8 @@
+import {
+  "colmugx/fuwaroid",
+  "moonbitlang/async",
+  "moonbitlang/core/bench" @clock,
+  "moonbitlang/core/env",
+}
+
+pkgtype(kind: "executable")

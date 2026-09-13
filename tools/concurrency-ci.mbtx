@@ -1,0 +1,172 @@
+/// Reproducible CI campaign: release executable, serial independent processes,
+/// bounded workloads, raw evidence retained before validating each result.
+/// Usage: rtk proxy moon run tools/concurrency-ci.mbtx [smoke]
+import {
+  "moonbitlang/async",
+  "moonbitlang/async/fs",
+  "moonbitlang/async/process",
+  "moonbitlang/async/shell",
+  "moonbitlang/core/env",
+  "moonbitlang/core/string",
+}
+
+///|
+struct Scenario {
+  name : String
+  purpose : String
+  args : Array[String]
+  metric : String
+}
+
+///|
+let scenarios : Array[Scenario] = [
+  { name: "tell", purpose: "Short state-update ingestion, including drain", args: ["tell", "messages=2000000", "warmup=100000"], metric: "throughput_end_to_end_msg_per_s" },
+  { name: "ask-idle", purpose: "Uncontended request/reply reference", args: ["ask", "mode=idle", "samples=10000", "warmup=1000"], metric: "latency_us_ask_p99" },
+  { name: "ask-loaded", purpose: "Request/reply alongside background writes", args: ["ask", "mode=loaded", "samples=10000", "warmup=1000", "producer_per_sample=100"], metric: "latency_us_ask_p99" },
+  { name: "hotcold-1", purpose: "Cold request isolation beside one hot actor", args: ["hotcold", "hot=1", "chain=2000000", "samples=5000"], metric: "latency_us_cold_p99" },
+  { name: "hotcold-16", purpose: "Cold request isolation beside sixteen hot actors", args: ["hotcold", "hot=16", "chain=2000000", "samples=5000"], metric: "latency_us_cold_p99" },
+  { name: "burst-unbounded", purpose: "Burst ingestion and queue growth", args: ["producers", "producers=16", "per_producer=50000", "capacity=unbounded", "burst=32"], metric: "outstanding_peak_sampled" },
+  { name: "burst-bounded", purpose: "Overload refusal with bounded capacity", args: ["producers", "producers=16", "per_producer=50000", "capacity=1024", "burst=32"], metric: "refused" },
+  { name: "handler-cost", purpose: "Synchronous CPU work limits scheduler capacity", args: ["handler", "messages=200000", "warmup=10000", "burn=2000"], metric: "throughput_end_to_end_msg_per_s" },
+]
+
+///|
+async fn command(program : String, args : Array[String]) -> String {
+  let output = @shell.Cmd(program, args).output(timeout_ms=600000)
+  output.check()
+  output.stdout()
+}
+
+///|
+async fn persist(report : String) -> Unit {
+  @fs.write_file("benchmark-results/report.md", report)
+  match @env.get_env_var("GITHUB_STEP_SUMMARY") {
+    Some(path) => @fs.write_file(path, report)
+    None => () // Local execution has no GitHub summary file.
+  }
+}
+
+///|
+async fn execute(name : String, args : Array[String]) -> String {
+  let base = "benchmark-results/\{name}"
+  @fs.write_file(base + ".command.txt", "_build/native/release/build/bench/bench.exe " + args.join(" "))
+  let stdout = @process.redirect_to_file(base + ".stdout.txt")
+  let stderr = @process.redirect_to_file(base + ".stderr.txt")
+  let result : Result[Int, Error] = Ok(@async.with_timeout(120000, () => {
+    @process.run("./_build/native/release/build/bench/bench.exe", args[:], stdout~, stderr~, cancel_handler=@process.hard_cancel())
+  })) catch { error => Err(error) }
+  match result {
+    Err(error) => {
+      @fs.write_file(base + ".status.txt", "FAILED: \{error}")
+      raise error
+    }
+    Ok(code) => {
+      @fs.write_file(base + ".status.txt", "exit_code: \{code}")
+      guard code == 0 else { fail("\{name}: exit \{code}; see raw stderr") }
+    }
+  }
+  let output = @fs.read_file(base + ".stdout.txt").text()
+  guard output.contains("conservation[") && !output.contains("SKIPPED") else {
+    fail("\{name}: missing or skipped conservation evidence")
+  }
+  output
+}
+
+///|
+fn metric(output : String, key : String) -> Double? raise {
+  for line in output.split("\n") {
+    if line.has_prefix(key + ": ") {
+      let value = line[(key.length() + 2):].to_owned()
+      if value == "n/a" { return None }
+      return Some(@string.parse_double(value))
+    }
+  }
+  fail("required metric missing: \{key}")
+}
+
+///|
+async fn main {
+  let args = @env.args()
+  guard args.length() == 1 || (args.length() == 2 && args[1] == "smoke") else {
+    fail("usage: concurrency-ci.mbtx [smoke]")
+  }
+  let smoke = args.length() == 2
+  let repetitions = if smoke { 1 } else { 5 }
+  guard !@fs.exists("benchmark-results") else {
+    fail("benchmark-results already exists; move it before starting a new campaign")
+  }
+  @fs.mkdir("benchmark-results")
+  let report = StringBuilder()
+  report <+ "# Concurrency benchmark\n\n"
+  report <+ "Status: INCOMPLETE until the final PASS marker.\n\n"
+  report <+ "Native **release**, default actor batch, diagnostics enabled; serial fresh processes. "
+  report <+ "Five repetitions in rotated scenario order (smoke: one reduced-budget repetition). "
+  report <+ "Compilation and process startup are excluded from workload clocks.\n\n"
+  report <+ "These are bounded application-shaped synthetic workloads, not production traffic or multi-core scaling. "
+  report <+ "No network/disk I/O is modeled. Shared hosted runners are noisy: compare only like environments, "
+  report <+ "inspect ranges and raw evidence; no absolute performance pass/fail threshold. "
+  report <+ "Closed-loop ask latency can understate overload (coordinated omission). "
+  report <+ "P99 is per-run successful-request P99; median of P99s is NOT a pooled P99. "
+  report <+ "Timeouts/refusals/stops are separate; sampled outstanding is not RSS and can miss peaks.\n\n"
+  persist(report.to_string())
+  let outcome : Result[Unit, Error] = Ok({
+    let environment = StringBuilder()
+    for (program, argv) in [("git", ["rev-parse", "HEAD"]), ("git", ["status", "--porcelain"]), ("rtk", ["proxy", "moon", "version", "--all"]), ("rtk", ["--version"]), ("uname", ["-a"])] {
+      environment <+ "$ \{program} \{argv.join(" ")}\n"
+      environment <+ "\{command(program, argv)}\n"
+    }
+    if @fs.exists("/proc/cpuinfo") {
+      environment <+ "\{@fs.read_file("/proc/cpuinfo").text()}"
+      environment <+ "\{@fs.read_file("/proc/meminfo").text()}"
+    }
+    for key in ["GITHUB_SHA", "GITHUB_RUN_ID", "GITHUB_RUN_ATTEMPT", "RUNNER_OS", "RUNNER_ARCH", "ImageOS", "ImageVersion"] {
+      if @env.get_env_var(key) is Some(value) { environment <+ "\{key}: \{value}\n" }
+    }
+    environment <+ "\nmoon.mod:\n\{@fs.read_file("moon.mod").text()}"
+    @fs.write_file("benchmark-results/environment.txt", environment.to_string())
+    // The resolved dependency graph is evidence, not just the declared pin.
+    @fs.write_file("benchmark-results/dependencies.txt", command("rtk", ["proxy", "moon", "tree"]))
+    report <+ "Environment and resolved dependencies: `environment.txt`, `dependencies.txt`.\n\n"
+    @fs.write_file("benchmark-results/build.txt", command("rtk", ["proxy", "moon", "build", "src/bench", "--target", "native", "--release", "--output-json"]))
+    let _ = execute("smoke", ["smoke"])
+    let values : Map[String, Array[Double]] = Map([])
+    for scenario in scenarios { values[scenario.name] = [] }
+    report <+ "## Individual runs\n\n"
+    for repetition in 0..<repetitions {
+      for offset in 0..<scenarios.length() {
+        let scenario = scenarios[(offset + repetition) % scenarios.length()]
+        let name = "\{scenario.name}-\{repetition + 1}"
+        let argv = scenario.args.copy()
+        if smoke {
+          argv.append(["messages=2000", "warmup=100", "samples=100", "chain=10000", "per_producer=500"])
+        }
+        println("Measuring \{name}")
+        let output = execute(name, argv)
+        let samples = values[scenario.name]
+        if metric(output, scenario.metric) is Some(value) { samples.push(value) }
+        report <+ "<details><summary>\{name}: \{scenario.purpose}</summary>\n\n```text\n"
+        report <+ "\{output}\n```\n</details>\n\n"
+        persist(report.to_string())
+      }
+    }
+    report <+ "## Across-process summary\n\n| Scenario | Metric | Runs | Median | Min | Max |\n|---|---|---:|---:|---:|---:|\n"
+    for scenario in scenarios {
+      let samples = values[scenario.name]
+      samples.sort()
+      if samples.length() == repetitions {
+        report <+ "| \{scenario.name} | \{scenario.metric} | \{repetitions} | \{samples[repetitions / 2]} | \{samples[0]} | \{samples[repetitions - 1]} |\n"
+      } else {
+        report <+ "| \{scenario.name} | \{scenario.metric} | \{samples.length()}/\{repetitions} | n/a: incomplete successful samples | n/a | n/a |\n"
+      }
+    }
+    report <+ "\n**PASS: all processes completed and conservation checks passed.** Performance and request failures must still be assessed from the measurements above.\n"
+  }) catch { error => Err(error) }
+  match outcome {
+    Ok(_) => persist(report.to_string())
+    Err(error) => {
+      report <+ "\n**FAILED / INCOMPLETE:** \{error}. Raw files are preserved; no success claim for missing measurements.\n"
+      persist(report.to_string())
+      raise error
+    }
+  }
+}

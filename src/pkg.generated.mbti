@@ -36,14 +36,42 @@ pub struct Fuwaroid[Cmd, Query, Reply] {
 }
 pub async fn[Cmd, Query, Reply] Fuwaroid::ask(Self[Cmd, Query, Reply], Query, timeout_ms~ : Int) -> Result[Reply, AskFailure]
 pub fn[Cmd, Query, Reply] Fuwaroid::close(Self[Cmd, Query, Reply]) -> Unit
-pub fn[State, Cmd, Query, Reply] Fuwaroid::spawn(group~ : @async.TaskGroup[Unit], init~ : State, on_cmd~ : (Ctx[Cmd, Query, Reply], State, Cmd) -> State, on_query~ : (Ctx[Cmd, Query, Reply], State, Query) -> (State, Reply), mailbox? : @aqueue.Kind) -> Self[Cmd, Query, Reply]
-pub fn[State, Cmd] Fuwaroid::spawn_fold(group~ : @async.TaskGroup[Unit], init~ : State, on_cmd~ : (Ctx[Cmd, Cmd, Unit], State, Cmd) -> State, mailbox? : @aqueue.Kind) -> Self[Cmd, Cmd, Unit]
+pub async fn[Cmd, Query, Reply] Fuwaroid::join(Self[Cmd, Query, Reply]) -> StopReason
+pub fn[Cmd, Query, Reply] Fuwaroid::snapshot(Self[Cmd, Query, Reply]) -> Snapshot
+pub fn[State, Cmd, Query, Reply] Fuwaroid::spawn(group~ : @async.TaskGroup[Unit], init~ : State, on_cmd~ : (Ctx[Cmd, Query, Reply], State, Cmd) -> State, on_query~ : (Ctx[Cmd, Query, Reply], State, Query) -> (State, Reply), mailbox? : Mailbox) -> Self[Cmd, Query, Reply]
+pub fn[State, Cmd] Fuwaroid::spawn_fold(group~ : @async.TaskGroup[Unit], init~ : State, on_cmd~ : (Ctx[Cmd, Unit, Unit], State, Cmd) -> State, mailbox? : Mailbox) -> Self[Cmd, Unit, Unit]
 pub fn[Cmd, Query, Reply] Fuwaroid::tell(Self[Cmd, Query, Reply], Cmd) -> Result[Unit, SendRefusal]
+
+pub(all) enum Lifecycle {
+  Running
+  Closing
+  Stopped(StopReason)
+} derive(@debug.Debug)
+
+pub(all) enum Mailbox {
+  Unbounded
+  Bounded(Int)
+} derive(Eq, @debug.Debug)
 
 pub(all) enum SendRefusal {
   MailboxClosed
   MailboxFull
 } derive(Eq, @debug.Debug)
+
+pub(all) struct Snapshot {
+  lifecycle : Lifecycle
+  accepted : Int64
+  processed : Int64
+  rejected_full : Int64
+  rejected_closed : Int64
+  abandoned : Int64
+  outstanding : Int64
+} derive(@debug.Debug)
+
+pub(all) enum StopReason {
+  Graceful
+  Stopped(Error)
+} derive(@debug.Debug)
 
 // Type aliases
 

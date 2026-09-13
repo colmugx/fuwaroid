@@ -149,7 +149,10 @@ async test "cancelled actor closes its handle" {
     let queue : @aqueue.Queue[Envelope[CounterCmd, CounterQuery, Int]] = @aqueue.Queue(
       kind=@aqueue.Unbounded,
     )
-    let fuwaroid : Fuwaroid[CounterCmd, CounterQuery, Int] = { mailbox: queue, }
+    let fuwaroid : Fuwaroid[CounterCmd, CounterQuery, Int] = {
+      mailbox: queue,
+      stop: None,
+    }
     let ctx : Ctx[CounterCmd, CounterQuery, Int] = { group, address: fuwaroid, }
     let loop_task = group.spawn(() => counter_loop(ctx, queue))
     @async.pause()
@@ -179,7 +182,10 @@ async test "queued ask and loop cancellation close the public handle" {
     let queue : @aqueue.Queue[Envelope[CounterCmd, CounterQuery, Int]] = @aqueue.Queue(
       kind=@aqueue.Unbounded,
     )
-    let fuwaroid : Fuwaroid[CounterCmd, CounterQuery, Int] = { mailbox: queue, }
+    let fuwaroid : Fuwaroid[CounterCmd, CounterQuery, Int] = {
+      mailbox: queue,
+      stop: None,
+    }
     let ctx : Ctx[CounterCmd, CounterQuery, Int] = { group, address: fuwaroid, }
 
     // Start the real ask before the loop so its envelope is queued through
@@ -229,6 +235,7 @@ async test "queued ask and loop cancellation close the public handle" {
 async test "full bounded mailbox reports MailboxFull" {
   let fuwaroid : Fuwaroid[CounterCmd, CounterQuery, Int] = {
     mailbox: @aqueue.Queue(kind=@aqueue.Blocking(1)),
+    stop: None,
   }
   debug_inspect(fuwaroid.tell(CounterCmd::Add(1)), content="Ok(())")
   debug_inspect(fuwaroid.tell(CounterCmd::Add(2)), content="Err(MailboxFull)")
@@ -240,6 +247,7 @@ async test "full bounded mailbox reports MailboxFull" {
 async test "unserved ask times out" {
   let fuwaroid : Fuwaroid[CounterCmd, CounterQuery, Int] = {
     mailbox: @aqueue.Queue(kind=@aqueue.Unbounded),
+    stop: None,
   }
   let outcome = fuwaroid.ask(CounterQuery::GetCount, timeout_ms=10)
   debug_inspect(outcome, content="Err(TimedOut)")
@@ -275,7 +283,10 @@ async test "foreign mailbox error propagates" {
       kind=@aqueue.Unbounded,
     )
     queue.close(error=ForeignError)
-    let fuwaroid : Fuwaroid[CounterCmd, CounterQuery, Int] = { mailbox: queue, }
+    let fuwaroid : Fuwaroid[CounterCmd, CounterQuery, Int] = {
+      mailbox: queue,
+      stop: None,
+    }
     let ctx : Ctx[CounterCmd, CounterQuery, Int] = { group, address: fuwaroid, }
     let outcome : Result[Unit, Error] = Ok(counter_loop(ctx, queue)) catch {
       error => Err(error)
@@ -324,7 +335,7 @@ async test "spawn_fold ask degenerates to processed receipt" {
       ()
     })
     let _ = fuwaroid.tell(PingCmd::Ping)
-    let receipt = fuwaroid.ask(PingCmd::Ping, timeout_ms=1000)
+    let receipt = fuwaroid.ask((), timeout_ms=1000)
     debug_inspect(receipt, content="Ok(())")
     // the ask rides the (no-op) query path, not on_cmd: only the tell folded
     debug_inspect(seen.length(), content="1")
@@ -376,4 +387,201 @@ priv suberror ForeignError {
 test "classify_ask_error table" {
   debug_inspect(classify_ask_error(StoppedError), content="Some(Stopped)")
   debug_inspect(classify_ask_error(ForeignError), content="None")
+}
+
+///|
+/// T15: stop/cleanup error identity, white-box fault injection. Two
+/// sections:
+///
+/// (a) A FOREIGN stop error keeps its ORIGINAL identity through the unified
+///     cleanup path. The "foreign mailbox error propagates" test above
+///     already proves the raw propagation out of the loop; this section
+///     extends that evidence to the recorded-reason contract: the loop task
+///     fails with the foreign error itself and `join` — reading the
+///     recorded reason after the task failed — returns
+///     `Stopped(ForeignError)`, the same constructor the
+///     raw error carried. `allow_failure=true` only keeps the EXPECTED loop
+///     failure contained inside this test group; the task itself still
+///     fails with the original error, which is exactly what join maps.
+///
+/// (b) A CANCELLED loop strands a queued ask: the ask is queued behind one
+///     full batch (`fuwaroid_yield_batch` commands), so the loop's first
+///     suspension is the batch-yield boundary where the cancellation lands
+///     and the ask is provably still queued. The recorded reason keeps the
+///     ORIGINAL runtime cancellation identity, the stranded ask's reply
+///     queue is closed with the stop marker (`StoppedError`) by
+///     `fail_leftover_asks`, and `join` reports the same recorded
+///     `Stopped(cancel error)`.
+///
+/// NOTE on secondary cleanup evidence (`LoopStop.cleanup_error`): injecting
+/// a secondary cleanup failure into `fuwaroid_cleanup` is NOT reachable
+/// with the current queue semantics: `Queue::close` is
+/// infallible (it overwrites the close error and never raises), and
+/// `fuwaroid_cleanup` closes the queue with the DEFAULT error before
+/// draining, so `fail_leftover_asks` can only ever observe
+/// `QueueAlreadyClosed`, which it treats as the normal end marker. No fake
+/// secondary failure is asserted here.
+async test "T15 stop reason keeps its original identity through cleanup and join" {
+  // ---- (a) foreign stop error: raw identity survives into join. ----
+  @async.with_task_group(group => {
+    let queue : @aqueue.Queue[Envelope[CounterCmd, CounterQuery, Int]] = @aqueue.Queue(
+      kind=@aqueue.Unbounded,
+    )
+    queue.close(error=ForeignError)
+    let stop : LoopStop = LoopStop::fresh()
+    let fuwaroid : Fuwaroid[CounterCmd, CounterQuery, Int] = {
+      mailbox: queue,
+      stop: Some(stop),
+    }
+    let ctx : Ctx[CounterCmd, CounterQuery, Int] = { group, address: fuwaroid, }
+    let task = group.spawn(allow_failure=true, () => {
+      fuwaroid_loop(
+        ctx,
+        { count: 0, },
+        (_, state, cmd) => {
+          match cmd {
+            Add(n) => {
+              state.count = state.count + n
+              state
+            }
+          }
+        },
+        (_, state, _query) => (state, state.count),
+        queue,
+        stop~,
+      )
+    })
+    stop.task = Some(task)
+    // The loop task fails with the ORIGINAL foreign error (re-raised by the
+    // unified cleanup path after recording the reason).
+    let outcome : Result[Unit, Error] = Ok(task.wait()) catch {
+      error => Err(error)
+    }
+    match outcome {
+      Err(ForeignError) => ()
+      Err(other) => fail("T15a: expected ForeignError, got \{other}")
+      Ok(_) =>
+        fail(
+          "T15a: the loop task completed normally despite the foreign mailbox error",
+        )
+    }
+    // join maps the failed task to the RECORDED reason: the original
+    // identity, never a replacement.
+    let reason = fuwaroid.join()
+    match reason {
+      Stopped(error) =>
+        match error {
+          ForeignError => ()
+          other =>
+            fail(
+              "T15a: join's Stopped holds \{other}, expected the original ForeignError",
+            )
+        }
+      Graceful => fail("T15a: join returned Graceful for a foreign stop")
+    }
+  })
+  // ---- (b) cancelled loop: stranded ask + original cancellation identity. ----
+  @async.with_task_group(group => {
+    let queue : @aqueue.Queue[Envelope[CounterCmd, CounterQuery, Int]] = @aqueue.Queue(
+      kind=@aqueue.Unbounded,
+    )
+    let reply : @aqueue.Queue[Int] = @aqueue.Queue(kind=@aqueue.Unbounded)
+    // One full batch of commands, then the ask: the loop's first suspension
+    // is the batch-yield boundary, so the ask is provably still queued when
+    // the cancellation lands there.
+    for _ in 0..<fuwaroid_yield_batch {
+      let _ = queue.try_put(Tell(Add(1)))
+    }
+    let _ = queue.try_put(Ask(GetCount, reply))
+    let stop : LoopStop = LoopStop::fresh()
+    let fuwaroid : Fuwaroid[CounterCmd, CounterQuery, Int] = {
+      mailbox: queue,
+      stop: Some(stop),
+    }
+    let ctx : Ctx[CounterCmd, CounterQuery, Int] = { group, address: fuwaroid, }
+    let task = group.spawn(() => {
+      fuwaroid_loop(
+        ctx,
+        { count: 0, },
+        (_, state, cmd) => {
+          match cmd {
+            Add(n) => {
+              state.count = state.count + n
+              state
+            }
+          }
+        },
+        (_, state, _query) => (state, state.count),
+        queue,
+        stop~,
+      )
+    })
+    stop.task = Some(task)
+    // Cancel before the loop's first turn: the first suspension it reaches
+    // is the batch-yield after one full batch — the ask stays queued.
+    task.cancel()
+    let outcome : Result[Unit, Error] = Ok(task.wait()) catch {
+      error => Err(error)
+    }
+    match outcome {
+      Err(error) => assert_true(@async.is_cancellation_error(error))
+      Ok(_) =>
+        fail("T15b: expected the cancelled loop to propagate cancellation")
+    }
+    // The recorded reason keeps the ORIGINAL cancellation identity.
+    match stop.reason {
+      Stopped(error) => assert_true(@async.is_cancellation_error(error))
+      Graceful =>
+        fail("T15b: the recorded reason is Graceful for a cancelled loop")
+    }
+    // The stranded ask's reply queue was closed with the stop marker by the
+    // cleanup path's fail_leftover_asks.
+    let reply_outcome : Result[Int, Error] = Ok(reply.get()) catch {
+      error => Err(error)
+    }
+    match reply_outcome {
+      Err(StoppedError) => ()
+      Err(other) =>
+        fail(
+          "T15b: expected StoppedError on the stranded reply queue, got \{other}",
+        )
+      Ok(_) => fail("T15b: the stranded reply queue was not closed")
+    }
+    // join agrees with the recorded reason.
+    let reason = fuwaroid.join()
+    match reason {
+      Stopped(error) => assert_true(@async.is_cancellation_error(error))
+      Graceful => fail("T15b: join returned Graceful for a cancelled loop")
+    }
+  })
+}
+
+///|
+/// Pure capacity-validation boundary: a `Bounded` capacity
+/// must be a POSITIVE integer. Zero — which `@aqueue` would silently accept
+/// as a rendezvous — and negative values are rejected; `spawn` aborts with
+/// the returned message (that end-to-end abort path is accepted separately,
+/// in an independent process, by tools/concurrency-api-guard.mbtx — an
+/// in-process `moon test` cannot observe an abort without killing the whole
+/// test executable).
+test "mailbox_capacity_error accepts only positive Bounded capacities" {
+  for n in [0, -1, -100] {
+    match mailbox_capacity_error(n) {
+      Some(message) => {
+        assert_true(message.contains("positive integer"))
+        assert_true(message.contains("got \{n}"))
+      }
+      None =>
+        fail("mailbox_capacity_error(\{n}) must reject a non-positive capacity")
+    }
+  }
+  for n in [1, 64, 1073741824] {
+    match mailbox_capacity_error(n) {
+      Some(message) =>
+        fail(
+          "mailbox_capacity_error(\{n}) must accept a positive capacity, got: \{message}",
+        )
+      None => ()
+    }
+  }
 }

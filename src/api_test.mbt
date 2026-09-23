@@ -72,9 +72,9 @@ async fn t05_barrier(
 fn t05_admission_window(
   fuwaroid : @fuwaroid.Fuwaroid[Int, Unit, Int],
   first_cmd : Int,
-) -> (Array[Int], SendRefusal?) {
+) -> (Array[Int], @fuwaroid.SendRefusal?) {
   let accepted : Array[Int] = []
-  let mut refusal : SendRefusal? = None
+  let mut refusal : @fuwaroid.SendRefusal? = None
   for i in 0..<t05_window_sends {
     match fuwaroid.tell(first_cmd + i) {
       Ok(_) => accepted.push(first_cmd + i)

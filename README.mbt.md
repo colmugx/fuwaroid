@@ -251,7 +251,7 @@ async test "close then join" {
 
 ## Supervisor: bounded task settlement
 
-Supervisor is introduced in Fuwaroid 0.3.0.
+Supervisor is introduced in Fuwaroid 0.2.0.
 
 `Supervisor` is a separate, lightweight structured-concurrency utility
 that lives next to Fuwaroid, not inside it:

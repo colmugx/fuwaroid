@@ -20,6 +20,9 @@ pub(all) enum AskFailure {
   TimedOut
   Stopped
 } derive(Eq, @debug.Debug)
+pub fn AskFailure::equal(Self, Self) -> Bool
+pub fn AskFailure::not_equal(Self, Self) -> Bool
+pub fn AskFailure::to_repr(Self) -> @debug.Repr
 
 pub struct Ctx[Cmd, Query, Reply] {
   group : @async.TaskGroup[Unit]
@@ -47,16 +50,23 @@ pub(all) enum Lifecycle {
   Closing
   Stopped(StopReason)
 } derive(@debug.Debug)
+pub fn Lifecycle::to_repr(Self) -> @debug.Repr
 
 pub(all) enum Mailbox {
   Unbounded
   Bounded(Int)
 } derive(Eq, @debug.Debug)
+pub fn Mailbox::equal(Self, Self) -> Bool
+pub fn Mailbox::not_equal(Self, Self) -> Bool
+pub fn Mailbox::to_repr(Self) -> @debug.Repr
 
 pub(all) enum SendRefusal {
   MailboxClosed
   MailboxFull
 } derive(Eq, @debug.Debug)
+pub fn SendRefusal::equal(Self, Self) -> Bool
+pub fn SendRefusal::not_equal(Self, Self) -> Bool
+pub fn SendRefusal::to_repr(Self) -> @debug.Repr
 
 pub(all) enum SettleOutcome {
   Settled
@@ -75,6 +85,7 @@ pub(all) struct Snapshot {
   abandoned : Int64
   outstanding : Int64
 } derive(@debug.Debug)
+pub fn Snapshot::to_repr(Self) -> @debug.Repr
 
 pub(all) enum SpawnRefusal {
   SupervisorClosed
@@ -88,6 +99,7 @@ pub(all) enum StopReason {
   Cancelled
   Failed(Error)
 } derive(@debug.Debug)
+pub fn StopReason::to_repr(Self) -> @debug.Repr
 
 pub struct SupervisedTask[X] {
   // private fields

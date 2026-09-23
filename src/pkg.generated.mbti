@@ -70,7 +70,8 @@ pub(all) struct Snapshot {
 
 pub(all) enum StopReason {
   Graceful
-  Stopped(Error)
+  Cancelled
+  Failed(Error)
 } derive(@debug.Debug)
 
 // Type aliases

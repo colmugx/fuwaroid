@@ -14,7 +14,7 @@
 ///   `rejected_full`/`rejected_closed`, never in `accepted`, and never
 ///   changes the fate of already-accepted messages.
 /// - Stop reasons are distinguishable: `Stopped(Graceful)` vs
-///   `Stopped(<original cancellation error>)`.
+///   `Stopped(Cancelled)` vs `Stopped(Failed(original error))`.
 ///
 /// `snapshot()` never suspends, so a snapshot taken in the SAME
 /// uninterrupted scheduling turn as the events it observes has exact,
@@ -248,7 +248,8 @@ priv enum T14Cmd {
 
 ///|
 /// T14-C: abnormal stop — the phase jumps to Stopped carrying
-/// the ORIGINAL cancellation reason, `abandoned` counts exactly the
+/// `Cancelled` (the host's cancellation signal is distinct from any
+/// `Error` in async 0.22.x), `abandoned` counts exactly the
 /// accepted-but-unserved messages (commands AND queries; the stranded-
 /// envelope drain is the truncation point), `outstanding` closes to zero,
 /// conservation holds, and a late `close` cannot regress the phase.
@@ -347,15 +348,13 @@ async test "T14-C snapshot after abnormal stop counts abandoned and keeps conser
     ) catch {
       error => Err(error)
     }
-    guard reason is Ok(@fuwaroid.Stopped(stop_err)) else {
+    guard reason is Ok(@fuwaroid.Cancelled) else {
       fail("T14-C: join after the cancellation returned \{Repr(reason)}")
     }
-    assert_true(@async.is_cancellation_error(stop_err))
     let s_stopped = handle.snapshot()
-    guard s_stopped.lifecycle is @fuwaroid.Stopped(@fuwaroid.Stopped(recorded)) else {
+    guard s_stopped.lifecycle is @fuwaroid.Stopped(@fuwaroid.Cancelled) else {
       fail("T14-C: post-stop lifecycle is \{Repr(s_stopped.lifecycle)}")
     }
-    assert_true(@async.is_cancellation_error(recorded))
     assert_eq(s_stopped.accepted, 2001L)
     // The closing law for an abnormal stop: abandoned == accepted -
     // processed EXACTLY, and outstanding has closed to zero (the same fact,
@@ -382,7 +381,7 @@ async test "T14-C snapshot after abnormal stop counts abandoned and keeps conser
     // A late close cannot regress the phase.
     handle.close()
     let s_late = handle.snapshot()
-    guard s_late.lifecycle is @fuwaroid.Stopped(@fuwaroid.Stopped(_)) else {
+    guard s_late.lifecycle is @fuwaroid.Stopped(@fuwaroid.Cancelled) else {
       fail("T14-C: late close regressed the phase: \{Repr(s_late.lifecycle)}")
     }
     assert_eq(

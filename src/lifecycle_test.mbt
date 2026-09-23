@@ -10,7 +10,7 @@
 ///   disciplines are observably different: `close` followed by an
 ///   IMMEDIATE host-scope return cancels the still-running loop
 ///   (cancellation outranks draining; `join` from an independent scope
-///   reports `Stopped(cancellation error)`), while `close(); join()`
+///   reports `Cancelled`), while `close(); join()`
 ///   before the scope ends drains the whole backlog in FIFO order and
 ///   reports `Graceful` (T08).
 ///
@@ -211,8 +211,9 @@ async test "T08 scope-end cancellation vs explicit join after close" {
   // Assertions (a):
   // 1. the host owner task still terminates normally (child cancellation
   //    during scope teardown is not a group failure),
-  // 2. `join` from the independent observer scope returns `Stopped(err)`
-  //    with `err` carrying the cancellation identity,
+  // 2. `join` from the independent observer scope returns `Cancelled` —
+  //    the loop's cleanup recorded the host's cancellation signal (a
+  //    distinct signal, not an `Error`, in async 0.22.x),
   // 3. the backlog was NOT drained: the processed count stays below the
   //    backlog size (cancellation won at an observable boundary).
   @async.with_task_group(outer => {
@@ -262,12 +263,11 @@ async test "T08 scope-end cancellation vs explicit join after close" {
     // The loop terminated during scope teardown; join returns the recorded
     // reason (with_timeout is only a hang guard).
     let reason = @async.with_timeout(10000, () => handle.join())
-    guard reason is @fuwaroid.Stopped(cancel_error) else {
+    guard reason is @fuwaroid.Cancelled else {
       fail(
-        "T08a: join after scope-end cancellation returned \{Repr(reason)}, expected Stopped(cancellation error)",
+        "T08a: join after scope-end cancellation returned \{Repr(reason)}, expected Cancelled",
       )
     }
-    assert_true(@async.is_cancellation_error(cancel_error))
     // Cancellation outranks draining: the loop stopped long before the
     // backlog was exhausted.
     if processed.val >= t08_backlog {
@@ -950,16 +950,18 @@ priv enum T10Query {
 ///|
 /// T10: cancelling the ASKER task — ONLY the asker; the actor
 /// and its host group stay untouched — while its ask waits behind a backlog.
-/// `ask` is a cancellation checkpoint: the caller's cancellation error is
-/// observed AT the ask call site and keeps its runtime identity (it is
-/// re-raised out of the asker task, never converted into an AskFailure).
-/// The actor is unaffected and keeps serving: the backlog completes exactly
-/// once and a fresh command+query afterwards gets the correct reply, so the
-/// interrupted ask left no state damage behind.
+/// `ask` is a cancellation checkpoint: the caller's own cancellation is
+/// the runtime's cancellation signal — NOT an `Error` in async 0.22.x —
+/// so it propagates through `ask` untouched (`catch` cannot capture it,
+/// and `ask` never converts it into an `AskFailure`). The asker task
+/// therefore ends cancelled, which the uncancelled test task observes as
+/// `@async.TaskCancelled` from `wait`. The actor is unaffected and keeps
+/// serving: the backlog completes exactly once and a fresh command+query
+/// afterwards gets the correct reply, so the interrupted ask left no
+/// state damage behind.
 async test "T10 asker cancellation propagates to the call site and the actor keeps serving" {
   let processed : Ref[Int] = Ref(0)
   let ask_started : Ref[Bool] = Ref(false)
-  let ask_site_error : Ref[Error?] = Ref(None)
   let ask_reply : Ref[Result[Int, @fuwaroid.AskFailure]?] = Ref(None)
   @async.with_task_group(group => {
     let handle = @fuwaroid.Fuwaroid::spawn(
@@ -982,22 +984,15 @@ async test "T10 asker cancellation propagates to the call site and the actor kee
       let _ = handle.tell(T10Add(1))
     }
     // The asker is an independent task in this scope; only IT is cancelled.
+    // The asker cannot (and must not try to) catch its own cancellation:
+    // it calls `ask` and lets the signal propagate out of the task.
     let asker = group.spawn(() => {
       ask_started.val = true
-      let outcome : Result[Result[Int, @fuwaroid.AskFailure], Error] = Ok(
-        handle.ask(T10Query::T10Count, timeout_ms=30000),
-      ) catch {
-        error => Err(error)
-      }
-      match outcome {
-        Ok(reply) => ask_reply.val = Some(reply)
-        Err(error) => {
-          // Record the call-site identity, then let the cancellation keep
-          // propagating out of the asker task (never converted).
-          ask_site_error.val = Some(error)
-          raise error
-        }
-      }
+      let reply : Result[Int, @fuwaroid.AskFailure] = handle.ask(
+        T10Query::T10Count,
+        timeout_ms=30000,
+      )
+      ask_reply.val = Some(reply)
     })
     let mut started = false
     for _ in 0..<lc_spin_budget {
@@ -1011,24 +1006,24 @@ async test "T10 asker cancellation propagates to the call site and the actor kee
       fail("T10: the asker never initiated its ask")
     }
     asker.cancel()
-    // Wait for the asker task to terminate FIRST — waiting suspends this
-    // task, so the cancellation is actually delivered at the ask's
-    // suspension point and the asker records what it observed.
+    // The test task (uncancelled) waits for the asker — waiting suspends
+    // this task, so the cancellation is actually delivered at the ask's
+    // suspension point. A cancelled TARGET is reported to the observer as
+    // the ordinary `@async.TaskCancelled` error.
     let asker_outcome : Result[Unit, Error] = Ok(asker.wait()) catch {
       error => Err(error)
     }
-    // The cancellation reached the ask call site with its identity intact.
-    guard ask_site_error.val is Some(site_error) else {
+    guard asker_outcome is Err(@async.TaskCancelled) else {
       fail(
-        "T10: the asker's cancellation never reached the ask call site (reply: \{Repr(ask_reply.val)})",
+        "T10: the cancelled asker did not end cancelled: \{Repr(asker_outcome)}",
       )
     }
-    assert_true(@async.is_cancellation_error(site_error))
-    // The asker task ends cancelled — the cancellation was re-raised, not
-    // converted into an AskFailure value.
-    match asker_outcome {
-      Err(error) => assert_true(@async.is_cancellation_error(error))
-      Ok(_) => fail("T10: the cancelled asker task completed normally")
+    // The cancellation aborted the ask: no reply was recorded (an
+    // AskFailure value would mean the cancellation was converted).
+    if ask_reply.val is Some(_) {
+      fail(
+        "T10: the cancelled asker recorded a reply instead of propagating its cancellation",
+      )
     }
     // The actor keeps serving: the backlog completes exactly once, then a
     // fresh command + query gets the correct reply (state unpolluted: the

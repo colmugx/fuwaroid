@@ -28,7 +28,9 @@
 ///   is closed, stranded asks are failed with the stop marker, the
 ///   termination reason is recorded, and only then does the loop task
 ///   terminate (returning normally after a graceful drain, re-raising the
-///   original error otherwise).
+///   original error for an ordinary failure, and terminating CANCELLED —
+///   observable as `@async.TaskCancelled` to `Task::wait` — after a host
+///   cancellation, whose signal in async 0.22.x is distinct from `Error`).
 /// - `join` waits for the loop task itself to terminate and returns the
 ///   recorded stop reason; it never waits for or cancels background work
 ///   a handler spawned on the host group.
@@ -92,15 +94,22 @@ pub(all) enum AskFailure {
 
 ///|
 /// Why the loop task terminated. Recorded by the unified stop path
-/// (`fuwaroid_cleanup`) before the loop task terminates; abnormal stops
-/// keep the ORIGINAL error identity (the host's cancellation error, or
-/// whatever terminal mailbox error occurred), never a compressed copy.
+/// (`fuwaroid_cleanup`) before the loop task terminates. The three
+/// constructors distinguish the terminal dispositions the async 0.22.x
+/// runtime separates at the language level:
+///
+/// - `Graceful`: `close` was requested and the closed-and-empty drain
+///   completed.
+/// - `Cancelled`: the host (task group) cancelled the loop. In
+///   `moonbitlang/async` 0.22.x cancellation is a distinct runtime signal,
+///   NOT an `Error` value, so it is reported as its own constructor —
+///   the loop never fabricates an error to stand in for it.
+/// - `Failed(Error)`: an ordinary terminal error (e.g. a foreign mailbox
+///   error); the ORIGINAL error identity is kept, never a compressed copy.
 pub(all) enum StopReason {
-  /// `close` was requested and the closed-and-empty drain completed.
   Graceful
-  /// The loop stopped abnormally: host cancellation observed at a yield
-  /// or `queue.get` boundary, or another terminal mailbox error.
-  Stopped(Error)
+  Cancelled
+  Failed(Error)
 } derive(Debug)
 
 ///|
@@ -256,18 +265,32 @@ pub fn[State, Cmd] Fuwaroid::spawn_fold(
 let fuwaroid_yield_batch : Int = 32
 
 ///|
-/// The serial drain. `queue.get()` suspends until a message arrives, so
-/// the loop never busy-polls. A closed-and-empty mailbox (graceful stop
-/// after `close`) ends the loop gracefully; task cancellation observed at
-/// a suspension boundary (`queue.get`, or the batch yield between
-/// complete messages) or any other terminal mailbox error ends it
-/// abnormally. ALL of these flow into the single cleanup path
-/// (`fuwaroid_cleanup`): admission is closed, stranded asks are failed,
-/// the termination reason is recorded — and only then does this task
-/// terminate, re-raising the ORIGINAL cause for abnormal stops (so a
-/// cancelled loop task still terminates with the cancellation identity
-/// and a foreign stop error stays observable) and returning normally
-/// after a graceful drain.
+/// The serial drain, wrapped in the loop task's cancellation boundary.
+/// In `moonbitlang/async` 0.22.x cancellation is a distinct runtime
+/// signal: ordinary `catch` only sees `Error` values and can never
+/// capture it. The structure is therefore:
+///
+/// - The REAL serving loop (`fuwaroid_serve`) runs inside a cancellable
+///   callback under `@async.handle_cancellation`. It handles the two
+///   error-shaped dispositions itself — the graceful closed-and-empty
+///   drain (`QueueAlreadyClosed`) and ordinary terminal mailbox errors —
+///   by running the unified cleanup (`fuwaroid_cleanup`) and re-raising
+///   the original cause for a `Failed` stop.
+/// - The outermost boundary distinguishes the three terminal
+///   dispositions: `Some(())` = the serving loop completed (graceful,
+///   reason already recorded); `Err(original)` = an ordinary error
+///   escaped (the recorded `Failed` cause re-raised by cleanup —
+///   propagation keeps the ORIGINAL identity); `None` = the host
+///   cancelled the loop while it was serving.
+/// - In the cancellation branch the task is in the sticky cancelled
+///   state. The unified cleanup still runs — under
+///   `@async.protect_from_cancel`, so it completes in full — and records
+///   `Cancelled`. The original cancellation is then re-propagated by
+///   entering one unprotected cancellation point (`@async.pause()`),
+///   which raises the still-pending cancellation signal (see `pause`:
+///   a cancelled, unshielded task raises immediately). The loop task
+///   therefore terminates CANCELLED — never as a normal completion —
+///   and an external `Task::wait` observer sees `@async.TaskCancelled`.
 ///
 /// Cancellation outranks draining: the loop stops at the next
 /// observable cancellation boundary — the batch yield after the message
@@ -275,8 +298,60 @@ let fuwaroid_yield_batch : Int = 32
 /// finishing the whole backlog. A message that `queue.get` already
 /// delivered when cancellation lands is still served: `try_get` does not
 /// observe cancellation, so one accepted message is never dropped
-/// mid-batch.
+/// mid-batch. Between complete messages there is still no suspension
+/// point: handler entry → handler return → state commit is atomic to the
+/// cooperative runtime.
 async fn[State, Cmd, Query, Reply] fuwaroid_loop(
+  ctx : Ctx[Cmd, Query, Reply],
+  init : State,
+  on_cmd : (Ctx[Cmd, Query, Reply], State, Cmd) -> State,
+  on_query : (Ctx[Cmd, Query, Reply], State, Query) -> (State, Reply),
+  queue : @aqueue.Queue[Envelope[Cmd, Query, Reply]],
+  stop~ : LoopStop,
+) -> Unit {
+  let outcome : Result[Unit?, Error] = Ok(
+    @async.handle_cancellation(() =>
+      fuwaroid_serve(ctx, init, on_cmd, on_query, queue, stop~)),
+  ) catch {
+    // Only ordinary errors arrive here: `catch` cannot capture the
+    // cancellation signal, and `handle_cancellation` reports cancellation
+    // as `None` instead.
+    error => Err(error)
+  }
+  match outcome {
+    // The serving loop returned after running its unified cleanup;
+    // a `Failed` cause was re-raised out of it, so reaching here
+    // normally means the graceful drain completed.
+    Ok(Some(_)) => ()
+    // Host cancellation observed inside the serving loop. Cleanup first
+    // (protected: cancellation is sticky), then let the original
+    // cancellation continue propagating so this task ends cancelled.
+    Ok(None) => {
+      fuwaroid_cleanup(queue, Cancelled, stop)
+      // Unprotected cancellation point: the task is still in the
+      // cancelled state, so this raises the pending cancellation signal
+      // and the coroutine terminates cancelled (never as normal Done).
+      @async.pause()
+    }
+    // Ordinary error escaped the serving loop: the original cause
+    // re-raised by its cleanup (a graceful stop's secondary cleanup
+    // failure arrives here the same way). The recorded reason already
+    // holds it; propagation keeps the ORIGINAL identity.
+    Err(original) => raise original
+  }
+}
+
+///|
+/// The message loop proper: suspend on `queue.get`, serve one envelope
+/// per iteration with a synchronous handler, yield the scheduler every
+/// `fuwaroid_yield_batch` complete messages. The loop exits on the first
+/// ordinary terminal error; `queue.get`'s ordinary queue errors are
+/// caught into `cause` (notably `QueueAlreadyClosed` after a graceful
+/// `close`), while cancellation is NOT catchable and simply unwinds this
+/// callback to the `handle_cancellation` boundary in `fuwaroid_loop`.
+/// On any ordinary exit the unified cleanup runs with the mapped reason
+/// and re-raises the original cause for a `Failed` stop.
+async fn[State, Cmd, Query, Reply] fuwaroid_serve(
   ctx : Ctx[Cmd, Query, Reply],
   init : State,
   on_cmd : (Ctx[Cmd, Query, Reply], State, Cmd) -> State,
@@ -289,6 +364,9 @@ async fn[State, Cmd, Query, Reply] fuwaroid_loop(
   let mut cause : Error? = None
   while cause is None {
     let next : Result[Envelope[Cmd, Query, Reply], Error] = Ok(queue.get()) catch {
+      // Ordinary queue errors only (closed-and-empty after `close`,
+      // foreign close errors). Cancellation is a separate signal and
+      // bypasses this handler entirely.
       error => Err(error)
     }
     match next {
@@ -311,48 +389,57 @@ async fn[State, Cmd, Query, Reply] fuwaroid_loop(
     }
     // Yield point BETWEEN complete messages only: the handler above ran
     // entry-to-return with no suspension inside. `pause` re-queues this
-    // task at the tail of the ready queue and raises the host's
-    // cancellation here if it was requested since the last boundary, so a
-    // cancelled loop cannot drain an unbounded backlog.
+    // task at the tail of the ready queue and delivers the host's
+    // cancellation signal here if it was requested since the last
+    // boundary, so a cancelled loop cannot drain an unbounded backlog.
+    // `pause` cannot raise an ordinary error; cancellation unwinds to the
+    // `handle_cancellation` boundary on its own.
     if cause is None && served_in_batch >= fuwaroid_yield_batch {
       served_in_batch = 0
-      let yielded : Result[Unit, Error] = Ok(@async.pause()) catch {
-        error => Err(error)
-      }
-      match yielded {
-        Ok(_) => ()
-        Err(error) => cause = Some(error)
-      }
+      @async.pause()
     }
   }
-  fuwaroid_cleanup(queue, cause, stop)
+  let reason : StopReason = match cause {
+    // Graceful: closed-and-empty drain completed (or the loop exited
+    // without a cause — same disposition).
+    None | Some(@aqueue.QueueAlreadyClosed) => Graceful
+    // Ordinary failure: keep the original error identity.
+    Some(original) => Failed(original)
+  }
+  fuwaroid_cleanup(queue, reason, stop)
 }
 
 ///|
 /// THE single stop/cleanup path for the loop. Runs exactly
-/// once, after the message loop exits, for every kind of stop:
+/// once per stop, for every disposition (`StopReason`):
 ///
 /// 1. Close admission (`queue.close`): idempotent — safe when the mailbox
 ///    was already closed (graceful `close`, or a foreign close). From here
 ///    on the handle refuses new messages.
 /// 2. Fail every accepted-but-unserved ask via `fail_leftover_asks` so
-///    its waiter gets `AskFailure::Stopped` immediately.
-/// 3. Record the termination reason on `stop`: `Graceful` for a
-///    closed-and-empty drain, `Stopped(original cause)` otherwise, and
-///    keep any secondary cleanup failure as evidence on
-///    `stop.cleanup_error` instead of swallowing it.
-/// 4. Propagate: a graceful stop returns normally unless the cleanup
-///    itself failed; an abnormal stop re-raises the ORIGINAL cause — the
-///    cleanup error never replaces it (a cancelled loop task keeps the
-///    cancellation identity; a foreign stop error stays observable).
+///    its waiter gets `AskFailure::Stopped` immediately. The drain is
+///    shielded with `@async.protect_from_cancel`, so it also completes
+///    when called from the sticky cancelled state (the cancellation
+///    branch of `fuwaroid_loop`).
+/// 3. Record the termination reason on `stop` and keep any secondary
+///    cleanup failure as evidence on `stop.cleanup_error` instead of
+///    swallowing it.
+/// 4. Propagate, with the PRIMARY cause winning:
+///    - `Graceful` returns normally unless the cleanup itself failed.
+///    - `Failed(original)` re-raises the ORIGINAL error — a secondary
+///      cleanup failure never replaces it.
+///    - `Cancelled` returns normally into the still-cancelled caller,
+///      which re-propagates the pending cancellation signal; a secondary
+///      cleanup failure is recorded as evidence only, so the actor is
+///      never disguised as an ordinary failure.
 async fn[Cmd, Query, Reply] fuwaroid_cleanup(
   queue : @aqueue.Queue[Envelope[Cmd, Query, Reply]],
-  cause : Error?,
+  reason : StopReason,
   stop : LoopStop,
 ) -> Unit {
   // The default close error is intentional: it only decides what NEW
-  // attempts to touch the mailbox see; the original stop cause is
-  // retained below and stranded asks get `StoppedError` in step 2.
+  // attempts to touch the mailbox see; the recorded reason is retained
+  // below and stranded asks get `StoppedError` in step 2.
   queue.close()
   stop.diag.transition(Closing)
   // Counting point: every envelope the stranded-ask drain removes
@@ -368,31 +455,23 @@ async fn[Cmd, Query, Reply] fuwaroid_cleanup(
     Ok(_) => None
     Err(error) => Some(error)
   }
-  match cause {
-    // Graceful: closed-and-empty drain completed (or the loop exited
-    // without a cause — same disposition).
-    Some(@aqueue.QueueAlreadyClosed) | None => {
-      stop.reason = Some(Graceful)
-      stop.cleanup_error = secondary
-      // Counting point: the unified cleanup is complete — the phase
-      // moves to Stopped carrying the recorded reason (forward-only).
-      stop.diag.transition(Lifecycle::Stopped(Graceful))
+  stop.reason = Some(reason)
+  stop.cleanup_error = secondary
+  // Counting point: the unified cleanup is complete — the phase moves to
+  // Stopped carrying the recorded reason (forward-only); `abandoned` was
+  // fixed by the drain above.
+  stop.diag.transition(Lifecycle::Stopped(reason))
+  match reason {
+    // Cancellation is re-propagated by the caller (the cancellation
+    // branch of `fuwaroid_loop`); secondary evidence stays recorded.
+    Cancelled => ()
+    Graceful =>
       match secondary {
         Some(error) => raise error
         None => ()
       }
-    }
-    // Abnormal: keep the original error identity; the secondary cleanup
-    // failure is preserved as evidence, never used as the replacement.
-    Some(original) => {
-      stop.reason = Some(Stopped(original))
-      stop.cleanup_error = secondary
-      // Counting point: the unified cleanup is complete — the phase
-      // moves to Stopped carrying the recorded reason (forward-only);
-      // `abandoned` was fixed by the drain above.
-      stop.diag.transition(Lifecycle::Stopped(Stopped(original)))
-      raise original
-    }
+    // Ordinary failure: the original error identity wins propagation.
+    Failed(original) => raise original
   }
 }
 
@@ -575,32 +654,41 @@ pub fn[Cmd, Query, Reply] Fuwaroid::close(
 ///   immediately once the loop has terminated. Only the loop task is
 ///   awaited: background work a handler spawned on the host group is
 ///   neither waited for nor cancelled by `join`.
-/// - The loop task ending `Done` (graceful closed-and-empty drain)
-///   returns the recorded reason, `Graceful`. The task failing returns
-///   the recorded `Stopped(original cause)` — notably host cancellation,
-///   which the unified stop path records before re-raising the cancel
-///   identity, so a joiner that is NOT itself cancelled observes
-///   `Stopped(cancel error)` instead of the raw cancellation.
-/// - If the WAITER itself is cancelled, that cancellation propagates,
-///   including when the loop already terminated. Cancellation is checked
-///   before waiting as well as when a wait error is caught.
-/// - Fallback boundary: a task failure whose recorded
-///   reason is absent or `Graceful` means an error escaped outside the
-///   recorded original cause — the recorded secondary cleanup evidence is
-///   mapped to `Stopped` when present (the task did fail; the evidence
-///   must not vanish), and the escaped error itself otherwise (only
-///   reachable through a cleanup-path bug).
+/// - Waiter cancellation (A): the waiter's own cancellation is the
+///   runtime's cancellation signal, NOT an `Error` — `catch` cannot
+///   capture it, so it propagates out of `join` unchanged and is never
+///   converted into a `StopReason`. The pre-check below makes even an
+///   ALREADY-cancelled waiter observe itself when the loop already
+///   terminated: `Task::wait` has a synchronous fast path for terminated
+///   targets that performs no cancellation check, so the pre-check raises
+///   the pending signal first via `@async.pause()`.
+/// - Cancelled loop task (B): `Task::wait` reports a cancelled TARGET as
+///   the ordinary `@async.TaskCancelled` error. That value describes the
+///   waited task, not this actor's stop, so it is never stored or
+///   returned as the reason: the loop's own cancellation branch already
+///   recorded `Cancelled` during its protected cleanup, and `join`
+///   returns exactly that.
+/// - Failed loop task (C): the target's ordinary error maps to the
+///   recorded `Failed(original)` — the original identity wins; a
+///   recorded-but-unexplained failure falls back to the secondary
+///   cleanup evidence, then to the raw task error (only reachable
+///   through a cleanup-path bug).
+/// - Graceful completion (D): the task ending `Done` returns the
+///   recorded reason, `Graceful`.
 /// - A missing internal task is an invariant violation and aborts.
 ///
 /// Note: when the loop task fails with a NON-cancellation error, the
 /// host task group's fail-fast still applies independently of `join` —
 /// a joiner living in the same group is cancelled with the group before
-/// it can observe `Stopped`; a joiner in a different scope observes it.
+/// it can observe `Failed`; a joiner in a different scope observes it.
 pub async fn[Cmd, Query, Reply] Fuwaroid::join(
   self : Fuwaroid[Cmd, Query, Reply],
 ) -> StopReason {
-  // Task::wait skips cancellation checks for already completed tasks.
-  // Obtain the runtime's cancellation error before taking that fast path.
+  // Task::wait skips cancellation checks for already completed targets.
+  // Surface the waiter's own pending cancellation before taking that
+  // fast path: `pause` raises the cancellation signal, which propagates
+  // out of `join` unchanged (it is not an `Error` and cannot be caught
+  // into a `StopReason`).
   if @async.is_being_cancelled() {
     @async.pause()
   }
@@ -610,6 +698,9 @@ pub async fn[Cmd, Query, Reply] Fuwaroid::join(
     None => abort("fuwaroid: join before loop task initialization")
   }
   let outcome : Result[Unit, Error] = Ok(task.wait()) catch {
+    // Only errors of the TARGET task arrive here: `catch` cannot capture
+    // the waiter's own cancellation signal, so no waiter-cancellation
+    // branch exists anymore.
     error => Err(error)
   }
   match outcome {
@@ -620,17 +711,21 @@ pub async fn[Cmd, Query, Reply] Fuwaroid::join(
           abort("fuwaroid: loop completed without recording its stop reason")
       }
     Err(error) =>
-      if @async.is_being_cancelled() {
-        raise error
-      } else {
-        match cell.reason {
-          Some(Stopped(_) as reason) => reason
-          Some(Graceful) | None =>
-            match cell.cleanup_error {
-              Some(secondary) => Stopped(secondary)
-              None => Stopped(error)
-            }
-        }
+      match error {
+        // The loop TASK was cancelled; its cancellation branch completed
+        // the unified cleanup before re-propagating, so `Cancelled` is
+        // the recorded outcome. `TaskCancelled` itself is never used as
+        // the reason — it describes the waited task, not this actor.
+        @async.TaskCancelled => Cancelled
+        other =>
+          match cell.reason {
+            Some(Failed(_) as reason) => reason
+            Some(Graceful) | Some(Cancelled) | None =>
+              match cell.cleanup_error {
+                Some(secondary) => Failed(secondary)
+                None => Failed(other)
+              }
+          }
       }
   }
 }

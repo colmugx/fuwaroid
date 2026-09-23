@@ -102,7 +102,7 @@ is exactly the shape that survives real threads unchanged.
 | `f.tell(cmd)` | Fire-and-forget; `Result[Unit, SendRefusal]` right after the mailbox decision. |
 | `f.ask(query, timeout_ms~)` | Request-response; `TimedOut` / `NotDelivered` / `Stopped` failures; caller cancellation propagates. |
 | `f.close()` | Graceful mailbox stop: refuse new, drain queued, exit the loop. Idempotent; returns before the drain completes. |
-| `f.join()` | Wait for the loop task to terminate; returns `StopReason` (`Graceful` or `Stopped(Error)`). Multi-waiter safe, immediate once terminated. Only waits for the loop — never for or against background work. |
+| `f.join()` | Wait for the loop task to terminate; returns `StopReason` (`Graceful`, `Cancelled`, or `Failed(Error)`). Multi-waiter safe, immediate once terminated. Only waits for the loop — never for or against background work. |
 | `f.snapshot()` | Synchronous, read-only diagnostic counters (`Snapshot`); never raises, never suspends. |
 | `Mailbox`, `StopReason`, `Snapshot`, `SendRefusal`, `AskFailure` | Configuration and result vocabulary, all owned by this library. |
 | `Ctx { group, address }` | All a handler may touch: the host group and its own address. A handler cannot call `ask` at all (handlers are synchronous, `ask` is async); reporting uses `tell`. |
@@ -217,11 +217,16 @@ async test "close then join" {
 - `close` is idempotent and returns before the drain completes; the loop
   drains the backlog in FIFO order, yielding between batches while doing so.
 - `join` returns the recorded `StopReason`: `Graceful` after a
-  closed-and-empty drain, `Stopped(original error)` after an abnormal stop
-  (host cancellation keeps its original error identity). Multiple waiters
-  are fine, and a `join` after termination returns immediately. If the
-  waiter itself is cancelled, that cancellation propagates unchanged,
-  including when the loop has already terminated.
+  closed-and-empty drain, `Cancelled` when the host cancelled the loop,
+  and `Failed(original error)` after an ordinary terminal error. In
+  `moonbitlang/async` 0.22.x cancellation is a runtime signal of its
+  own, distinct from `Error` — Fuwaroid never wraps it into a fake
+  error. The cancelled loop task ends cancelled (an external
+  `Task::wait` observer sees `@async.TaskCancelled`), and `join`
+  reports the recorded `Cancelled`. Multiple waiters are fine, and a
+  `join` after termination returns immediately. If the waiter itself is
+  cancelled, that cancellation propagates unchanged, including when the
+  loop has already terminated.
 - Abnormal cleanup closes admission and enters `Closing`, then abandons
   queued messages in batches of 32 under cancellation protection. It yields
   between batches so other tasks can run; `join` completes only after all
@@ -230,7 +235,7 @@ async test "close then join" {
   host group. `close()` followed by an *immediate* return from the host
   scope cancels the still-running loop — the backlog is NOT fully
   processed and `join` (observed from another scope) reports
-  `Stopped(cancellation error)`. To confirm a graceful drain, `close();
+  `Cancelled`. To confirm a graceful drain, `close();
   join()` **before** leaving the scope.
 - An `ask` issued just before `close` proves ordering by FIFO: its reply
   certifies every message enqueued before it was already served.
@@ -351,15 +356,30 @@ says `0.1.0`); there is no compatibility layer.
 | no termination wait | `join()` returns `StopReason`; `close(); join()` confirms the drain. |
 | no diagnostics | `snapshot()` returns `Snapshot` counters. |
 
+## Migrating to 0.2.0 (`moonbitlang/async` 0.22.x)
+
+0.2.0 tracks `moonbitlang/async` 0.22.x, whose cancellation is a compiler
+cancellation signal — propagated like an error but NOT capturable by
+`catch` and NOT an `Error` value. `StopReason` therefore changes shape
+(breaking, no compatibility layer):
+
+| 0.1.x | 0.2.0 |
+|---|---|
+| `StopReason::Stopped(error)` — one abnormal constructor; host cancellation surfaced as a stored cancellation `Error` | `StopReason::Cancelled` for a host-cancelled loop (the cancelled loop task ends cancelled; `Task::wait` observers see `@async.TaskCancelled`), and `StopReason::Failed(original error)` for ordinary terminal errors |
+| `join` on a cancelled loop returned `Stopped(cancel error)` | `join` returns `Cancelled`; `TaskCancelled` itself is never stored or returned as the reason |
+
 ## Purity
 
 Error classification (`classify_ask_error`) and capacity validation
 (`mailbox_capacity_error`) are pure and table-tested. The lifecycle itself
-performs queue close/drain operations and preserves the original stop
-error: only `QueueAlreadyClosed` is a graceful mailbox stop, while
-cancellation and foreign queue errors propagate as the recorded
-`StopReason::Stopped` cause. Callback serialization does not make generic
-state ownership or callback purity a type-enforced property.
+performs queue close/drain operations and preserves the terminal
+disposition: only `QueueAlreadyClosed` is a graceful mailbox stop; a
+foreign queue error keeps its original identity as
+`StopReason::Failed(original)`, while the host's cancellation — a runtime
+signal distinct from `Error` in async 0.22.x — is recorded as
+`StopReason::Cancelled`, never disguised as an error. Callback
+serialization does not make generic state ownership or callback purity a
+type-enforced property.
 
 ## License
 

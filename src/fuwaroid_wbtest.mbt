@@ -161,9 +161,14 @@ async test "cancelled actor closes its handle" {
     let loop_outcome : Result[Unit, Error] = Ok(loop_task.wait()) catch {
       error => Err(error)
     }
+    // This test task is NOT cancelled, so a failed wait can only report
+    // the TARGET loop task's cancellation — the ordinary
+    // `@async.TaskCancelled` error. (The loop's own cancellation signal
+    // is not an `Error` and never appears here.)
     match loop_outcome {
-      Err(error) => assert_true(@async.is_cancellation_error(error))
-      Ok(_) => fail("expected the actor loop to propagate cancellation")
+      Err(@async.TaskCancelled) => ()
+      Err(other) => fail("expected TaskCancelled, got \{other}")
+      Ok(_) => fail("expected the actor loop to end cancelled")
     }
     debug_inspect(
       fuwaroid.tell(CounterCmd::Add(1)),
@@ -204,9 +209,12 @@ async test "queued ask and loop cancellation close the public handle" {
     let loop_outcome : Result[Unit, Error] = Ok(loop_task.wait()) catch {
       error => Err(error)
     }
+    // Uncancelled observer: the cancelled loop task is reported as the
+    // ordinary `@async.TaskCancelled` error.
     match loop_outcome {
-      Err(error) => assert_true(@async.is_cancellation_error(error))
-      Ok(_) => fail("expected the actor loop to propagate cancellation")
+      Err(@async.TaskCancelled) => ()
+      Err(other) => fail("expected TaskCancelled, got \{other}")
+      Ok(_) => fail("expected the actor loop to end cancelled")
     }
 
     let ask_outcome : Result[Result[Int, AskFailure], Error] = Ok(
@@ -391,7 +399,7 @@ test "classify_ask_error table" {
 }
 
 ///|
-/// T15: stop/cleanup error identity, white-box fault injection. Two
+/// T15: stop/cleanup disposition, white-box fault injection. Two
 /// sections:
 ///
 /// (a) A FOREIGN stop error keeps its ORIGINAL identity through the unified
@@ -400,7 +408,7 @@ test "classify_ask_error table" {
 ///     extends that evidence to the recorded-reason contract: the loop task
 ///     fails with the foreign error itself and `join` — reading the
 ///     recorded reason after the task failed — returns
-///     `Stopped(ForeignError)`, the same constructor the
+///     `Failed(ForeignError)`, the same constructor the
 ///     raw error carried. `allow_failure=true` only keeps the EXPECTED loop
 ///     failure contained inside this test group; the task itself still
 ///     fails with the original error, which is exactly what join maps.
@@ -408,11 +416,13 @@ test "classify_ask_error table" {
 /// (b) A CANCELLED loop strands a queued ask: the ask is queued behind one
 ///     full batch (`fuwaroid_yield_batch` commands), so the loop's first
 ///     suspension is the batch-yield boundary where the cancellation lands
-///     and the ask is provably still queued. The recorded reason keeps the
-///     ORIGINAL runtime cancellation identity, the stranded ask's reply
-///     queue is closed with the stop marker (`StoppedError`) by
-///     `fail_leftover_asks`, and `join` reports the same recorded
-///     `Stopped(cancel error)`.
+///     and the ask is provably still queued. The recorded reason is
+///     `Cancelled` — in async 0.22.x the cancellation signal is distinct
+///     from `Error`, so no error value is fabricated for it — the stranded
+///     ask's reply queue is closed with the stop marker (`StoppedError`) by
+///     `fail_leftover_asks`, the loop task terminates CANCELLED (the
+///     uncancelled observer sees `@async.TaskCancelled` from `wait`), and
+///     `join` reports the same recorded `Cancelled`.
 ///
 /// NOTE on secondary cleanup evidence (`LoopStop.cleanup_error`): injecting
 /// a secondary cleanup failure into `fuwaroid_cleanup` is NOT reachable
@@ -470,15 +480,16 @@ async test "T15 stop reason keeps its original identity through cleanup and join
     // identity, never a replacement.
     let reason = fuwaroid.join()
     match reason {
-      Stopped(error) =>
+      Failed(error) =>
         match error {
           ForeignError => ()
           other =>
             fail(
-              "T15a: join's Stopped holds \{other}, expected the original ForeignError",
+              "T15a: join's Failed holds \{other}, expected the original ForeignError",
             )
         }
       Graceful => fail("T15a: join returned Graceful for a foreign stop")
+      Cancelled => fail("T15a: join returned Cancelled for a foreign stop")
     }
   })
   // ---- (b) cancelled loop: stranded ask + original cancellation identity. ----
@@ -524,16 +535,20 @@ async test "T15 stop reason keeps its original identity through cleanup and join
     let outcome : Result[Unit, Error] = Ok(task.wait()) catch {
       error => Err(error)
     }
+    // The uncancelled test task observes the cancelled loop task as the
+    // ordinary `@async.TaskCancelled` error — never as a normal Done.
     match outcome {
-      Err(error) => assert_true(@async.is_cancellation_error(error))
+      Err(@async.TaskCancelled) => ()
+      Err(other) => fail("T15b: expected TaskCancelled, got \{other}")
       Ok(_) =>
-        fail("T15b: expected the cancelled loop to propagate cancellation")
+        fail("T15b: the cancelled loop ended as a normal completion")
     }
-    // The recorded reason keeps the ORIGINAL cancellation identity.
+    // The recorded reason is `Cancelled`: the cancellation signal is not
+    // an `Error`, so no error value is fabricated for it.
     match stop.reason {
-      Some(Stopped(error)) => assert_true(@async.is_cancellation_error(error))
-      Some(Graceful) | None =>
-        fail("T15b: the recorded reason is Graceful for a cancelled loop")
+      Some(Cancelled) => ()
+      Some(Graceful) | Some(Failed(_)) | None =>
+        fail("T15b: the recorded reason is not Cancelled for a cancelled loop")
     }
     // The stranded ask's reply queue was closed with the stop marker by the
     // cleanup path's fail_leftover_asks.
@@ -551,8 +566,9 @@ async test "T15 stop reason keeps its original identity through cleanup and join
     // join agrees with the recorded reason.
     let reason = fuwaroid.join()
     match reason {
-      Stopped(error) => assert_true(@async.is_cancellation_error(error))
-      Graceful => fail("T15b: join returned Graceful for a cancelled loop")
+      Cancelled => ()
+      Failed(_) | Graceful =>
+        fail("T15b: join did not return Cancelled for a cancelled loop")
     }
   })
 }
@@ -588,6 +604,12 @@ test "mailbox_capacity_error accepts only positive Bounded capacities" {
 }
 
 ///|
+/// A cancelled join waiter observes its OWN cancellation — the runtime's
+/// cancellation signal, which `catch` cannot capture and `join` cannot
+/// convert into a `StopReason`. The waiter task therefore ends cancelled,
+/// and the uncancelled test task (the observer) verifies that by waiting
+/// on the waiter and seeing `@async.TaskCancelled`. The actor's outcome
+/// is unaffected: it stays `Graceful`.
 async test "cancelled joiner propagates cancellation after loop completion" {
   @async.with_task_group(group => {
     let actor : Fuwaroid[Unit, Unit, Unit] = Fuwaroid::spawn_fold(
@@ -597,21 +619,30 @@ async test "cancelled joiner propagates cancellation after loop completion" {
     )
     actor.close()
     guard actor.join() is Graceful else { fail("expected graceful stop") }
-    let checked = Ref(false)
+    let entered = Ref(false)
     let waiter = group.spawn(() => {
+      // The waiter is cancelled before it runs; `join`'s pre-check
+      // surfaces the pending cancellation even though the loop already
+      // terminated (Task::wait's fast path performs no cancellation
+      // check). The signal propagates out of the task, so the join value
+      // is never produced.
       assert_true(@async.is_being_cancelled())
-      let result : Result[StopReason, Error] = Ok(actor.join()) catch {
-        error => Err(error)
-      }
-      match result {
-        Err(error) => assert_true(@async.is_cancellation_error(error))
-        Ok(_) => fail("cancelled join returned a stop reason")
-      }
-      checked.val = true
+      entered.val = true
+      let _ = actor.join()
     })
     waiter.cancel()
-    waiter.wait()
-    assert_true(checked.val)
+    // This test task is NOT cancelled: waiting on the cancelled waiter
+    // reports the TARGET's cancellation as the ordinary
+    // `@async.TaskCancelled` error.
+    let waiter_outcome : Result[Unit, Error] = Ok(waiter.wait()) catch {
+      error => Err(error)
+    }
+    guard waiter_outcome is Err(@async.TaskCancelled) else {
+      fail(
+        "the cancelled join waiter did not end cancelled: \{Repr(waiter_outcome)}",
+      )
+    }
+    assert_true(entered.val)
     guard actor.join() is Graceful else { fail("waiter changed actor outcome") }
   })
 }
@@ -655,10 +686,11 @@ async test "cancelled cleanup yields with admission closed and settles every ask
       @async.pause()
     }
     assert_true(observed_partial, msg="cleanup monopolized the scheduler")
+    // The uncancelled test task observes the cancelled loop task through
+    // join: the recorded reason is `Cancelled`.
     let reason = actor.join()
-    match reason {
-      Stopped(error) => assert_true(@async.is_cancellation_error(error))
-      Graceful => fail("cancelled cleanup lost original cause")
+    guard reason is Cancelled else {
+      fail("cancelled cleanup lost the cancellation: \{Repr(reason)}")
     }
     for reply in replies {
       let outcome : Result[Int, Error] = Ok(reply.get()) catch {
@@ -672,8 +704,8 @@ async test "cancelled cleanup yields with admission closed and settles every ask
     assert_eq(final_snapshot.processed, fuwaroid_yield_batch.to_int64())
     assert_eq(final_snapshot.abandoned, (fuwaroid_yield_batch * 4).to_int64())
     assert_eq(final_snapshot.outstanding, 0L)
-    guard final_snapshot.lifecycle is Stopped(Stopped(_)) else {
-      fail("cleanup did not publish abnormal terminal state")
+    guard final_snapshot.lifecycle is Stopped(Cancelled) else {
+      fail("cleanup did not publish the cancelled terminal state")
     }
   })
 }

@@ -324,9 +324,10 @@ priv enum T03Cmd {
 /// Assertions: the host group terminates after cancellation; the handle
 /// refuses new tells and asks afterwards (fail fast, no hang); the loop
 /// stops at an observable cancellation boundary instead of finishing the
-/// whole backlog; and `join` returns `Stopped(err)` whose `err` IS the
-/// runtime's injected cancellation error — the cancellation identity
-/// survived the stop path and re-raise intact.
+/// whole backlog; and `join` from the uncancelled observer returns
+/// `Cancelled` — the loop recorded the host's cancellation signal (which
+/// is distinct from any `Error` in async 0.22.x) and terminated
+/// cancelled.
 async test "T03 cancelling a busy host stops the loop and closes admission" {
   let processed : Ref[Int] = Ref(0)
   let handle_cell : Ref[@fuwaroid.Fuwaroid[T03Cmd, Unit, Unit]?] = Ref(None)
@@ -400,16 +401,17 @@ async test "T03 cancelling a busy host stops the loop and closes admission" {
         "T03: loop drained the whole backlog after cancellation: processed=\{processed.val} of \{t03_chain_len}",
       )
     }
-    // Cancellation identity through join: the recorded stop reason is
-    // `Stopped` holding the original injected cancellation error. The
-    // observer is not itself cancelled, so `join` surfaces the recorded
-    // reason rather than re-raising; `with_timeout` is only a hang guard.
+    // Cancellation through join: the recorded stop reason is `Cancelled`
+    // — the loop's cancellation branch completed its protected cleanup
+    // and recorded the cancellation before the task terminated cancelled.
+    // The observer is not itself cancelled, so `join` surfaces the
+    // recorded reason rather than its own signal; `with_timeout` is only
+    // a hang guard.
     let reason = @async.with_timeout(10000, () => handle.join())
-    guard reason is @fuwaroid.Stopped(cancel_error) else {
+    guard reason is @fuwaroid.Cancelled else {
       fail(
-        "T03: join after host cancellation returned \{Repr(reason)}, expected Stopped(cancellation error)",
+        "T03: join after host cancellation returned \{Repr(reason)}, expected Cancelled",
       )
     }
-    assert_true(@async.is_cancellation_error(cancel_error))
   })
 }

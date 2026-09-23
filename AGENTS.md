@@ -39,3 +39,14 @@ Report the behavior now guaranteed and the commands that were actually run. Dist
 Prefer a small, coherent diff. Preserve unrelated documentation, benchmark evidence, ignore rules, and repository structure unless the PR's stated reason requires changing them.
 
 For concurrency changes, document the observable semantics and test race boundaries rather than relying only on compilation. Tests should distinguish the current task's cancellation from errors reported when waiting on another task.
+
+
+## Constructor naming
+
+Use MoonBit's type-named constructor convention for public constructors:
+
+- Declare constructors as `Type::Type(...)`.
+- Call them as `Type(...)`.
+- Do not introduce `Type::new(...)` when a normal public constructor is intended.
+
+For example, declare `Supervisor::Supervisor(...)` and call it as `Supervisor(...)`.

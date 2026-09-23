@@ -13,6 +13,9 @@ pub(all) enum Lifecycle {
 } derive(Debug)
 
 ///|
+pub extend Lifecycle with @moonbitlang/core/debug.Debug::{to_repr}
+
+///|
 /// Synchronous, read-only diagnostic snapshot of one Fuwaroid. Every
 /// field is a copied value: a snapshot never leaks
 /// mutable internal state, the business `State`, nor `Cmd`/`Query`/`Reply`
@@ -57,6 +60,9 @@ pub(all) struct Snapshot {
   abandoned : Int64
   outstanding : Int64
 } derive(Debug)
+
+///|
+pub extend Snapshot with @moonbitlang/core/debug.Debug::{to_repr}
 
 ///|
 /// Mutable per-instance diagnostic state backing `Snapshot`. It lives

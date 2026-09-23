@@ -79,6 +79,12 @@ pub(all) enum SendRefusal {
 } derive(Eq, Debug)
 
 ///|
+pub extend SendRefusal with Eq::{equal, not_equal}
+
+///|
+pub extend SendRefusal with @moonbitlang/core/debug.Debug::{to_repr}
+
+///|
 /// Why an `ask` did not produce a reply.
 pub(all) enum AskFailure {
   /// The request never entered the mailbox.
@@ -91,6 +97,12 @@ pub(all) enum AskFailure {
   /// was queued; its reply queue was closed by the drain.
   Stopped
 } derive(Eq, Debug)
+
+///|
+pub extend AskFailure with Eq::{equal, not_equal}
+
+///|
+pub extend AskFailure with @moonbitlang/core/debug.Debug::{to_repr}
 
 ///|
 /// Why the loop task terminated. Recorded by the unified stop path
@@ -111,6 +123,9 @@ pub(all) enum StopReason {
   Cancelled
   Failed(Error)
 } derive(Debug)
+
+///|
+pub extend StopReason with @moonbitlang/core/debug.Debug::{to_repr}
 
 ///|
 /// Internal marker closed into reply queues of asks stranded by an
@@ -165,6 +180,12 @@ pub(all) enum Mailbox {
   Unbounded
   Bounded(Int)
 } derive(Eq, Debug)
+
+///|
+pub extend Mailbox with Eq::{equal, not_equal}
+
+///|
+pub extend Mailbox with @moonbitlang/core/debug.Debug::{to_repr}
 
 ///|
 /// Pure validation of a `Bounded` capacity: returns the failure

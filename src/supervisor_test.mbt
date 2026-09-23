@@ -68,6 +68,11 @@ async test "S01 successful task completes, delivers value, leaves registry" {
 }
 
 ///|
+priv suberror S02Boom {
+  S02Boom(String)
+}
+
+///|
 /// Ordinary failure keeps original error propagation and host-group fail-fast.
 async test "S02 failure propagates original error and host group semantics" {
   let sup_cell : Ref[@fuwaroid.Supervisor[Int]?] = Ref(None)

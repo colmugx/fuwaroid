@@ -58,6 +58,14 @@ pub(all) enum SendRefusal {
   MailboxFull
 } derive(Eq, @debug.Debug)
 
+pub(all) enum SettleOutcome {
+  Settled
+  DeadlineExceeded(Array[SupervisedTaskSnapshot])
+} derive(Eq, @debug.Debug)
+pub fn SettleOutcome::equal(Self, Self) -> Bool
+pub fn SettleOutcome::not_equal(Self, Self) -> Bool
+pub fn SettleOutcome::to_repr(Self) -> @debug.Repr
+
 pub(all) struct Snapshot {
   lifecycle : Lifecycle
   accepted : Int64
@@ -68,11 +76,72 @@ pub(all) struct Snapshot {
   outstanding : Int64
 } derive(@debug.Debug)
 
+pub(all) enum SpawnRefusal {
+  SupervisorClosed
+} derive(Eq, @debug.Debug)
+pub fn SpawnRefusal::equal(Self, Self) -> Bool
+pub fn SpawnRefusal::not_equal(Self, Self) -> Bool
+pub fn SpawnRefusal::to_repr(Self) -> @debug.Repr
+
 pub(all) enum StopReason {
   Graceful
   Cancelled
   Failed(Error)
 } derive(@debug.Debug)
+
+pub struct SupervisedTask[X] {
+  // private fields
+}
+pub fn[X] SupervisedTask::cancel(Self[X]) -> Unit
+pub fn[X] SupervisedTask::snapshot(Self[X]) -> SupervisedTaskSnapshot
+pub async fn[X] SupervisedTask::wait(Self[X]) -> X
+
+pub(all) struct SupervisedTaskSnapshot {
+  id : Int
+  label : String
+  status : SupervisedTaskStatus
+  error_text : String?
+} derive(Eq, @debug.Debug)
+pub fn SupervisedTaskSnapshot::equal(Self, Self) -> Bool
+pub fn SupervisedTaskSnapshot::not_equal(Self, Self) -> Bool
+pub fn SupervisedTaskSnapshot::to_repr(Self) -> @debug.Repr
+
+pub(all) enum SupervisedTaskStatus {
+  Running
+  Cancelling
+  Completed
+  Cancelled
+  Failed
+} derive(Eq, @debug.Debug)
+pub fn SupervisedTaskStatus::equal(Self, Self) -> Bool
+pub fn SupervisedTaskStatus::not_equal(Self, Self) -> Bool
+pub fn SupervisedTaskStatus::to_repr(Self) -> @debug.Repr
+
+pub struct Supervisor[X] {
+  // private fields
+}
+pub async fn[X] Supervisor::cancel_and_wait(Self[X], tasks~ : ArrayView[SupervisedTask[X]], timeout_ms~ : Int) -> SettleOutcome
+pub fn[G, X] Supervisor::Supervisor(group~ : @async.TaskGroup[G]) -> Self[X]
+pub async fn[X] Supervisor::shutdown(Self[X], timeout_ms~ : Int) -> SettleOutcome
+pub fn[X] Supervisor::snapshot(Self[X]) -> SupervisorSnapshot
+pub fn[X] Supervisor::spawn(Self[X], async () -> X, label? : String) -> Result[SupervisedTask[X], SpawnRefusal]
+
+pub(all) enum SupervisorLifecycle {
+  Open
+  Closing
+  Closed
+} derive(Eq, @debug.Debug)
+pub fn SupervisorLifecycle::equal(Self, Self) -> Bool
+pub fn SupervisorLifecycle::not_equal(Self, Self) -> Bool
+pub fn SupervisorLifecycle::to_repr(Self) -> @debug.Repr
+
+pub(all) struct SupervisorSnapshot {
+  lifecycle : SupervisorLifecycle
+  tasks : Array[SupervisedTaskSnapshot]
+} derive(Eq, @debug.Debug)
+pub fn SupervisorSnapshot::equal(Self, Self) -> Bool
+pub fn SupervisorSnapshot::not_equal(Self, Self) -> Bool
+pub fn SupervisorSnapshot::to_repr(Self) -> @debug.Repr
 
 // Type aliases
 

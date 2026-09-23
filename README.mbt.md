@@ -106,6 +106,15 @@ is exactly the shape that survives real threads unchanged.
 | `f.snapshot()` | Synchronous, read-only diagnostic counters (`Snapshot`); never raises, never suspends. |
 | `Mailbox`, `StopReason`, `Snapshot`, `SendRefusal`, `AskFailure` | Configuration and result vocabulary, all owned by this library. |
 | `Ctx { group, address }` | All a handler may touch: the host group and its own address. A handler cannot call `ask` at all (handlers are synchronous, `ask` is async); reporting uses `tell`. |
+| `Supervisor(group~)` | Bind a supervisor to an existing host task group of any result type. No runtime is created; the host stays the structured-concurrency owner. Opt-in and fully separate from every Fuwaroid path. |
+| `sup.spawn(f, label?)` | Spawn an owned task on the host group; `Result[SupervisedTask[X], SpawnRefusal]` — refusal is explicit once shutdown began, never a silent drop. |
+| `handle.cancel()` | Cooperative cancellation REQUEST (`Running -> Cancelling`, idempotent, forward-only). Returning does not mean the task stopped. |
+| `handle.wait()` | Result delivery delegated to `Task::wait`: the value, the ORIGINAL error, or `@async.TaskCancelled` for a cancelled target. Multi-waiter and late-wait safe. |
+| `handle.snapshot()` | Synchronous `{ id, label, status, error_text }` view. |
+| `sup.cancel_and_wait(tasks~, timeout_ms~)` | Cancel the SELECTED tasks and wait for exactly them under ONE overall deadline: `Settled`, or `DeadlineExceeded(snapshots)` with the unresolved tasks in their true status. Unselected tasks and admission are untouched. |
+| `sup.shutdown(timeout_ms~)` | Close admission forever, then cancel and bounded-settle everything live. Idempotent; a deadline exceeded can be retried and finally reports `Settled`. |
+| `sup.snapshot()` | Synchronous `{ lifecycle, tasks }` view (`Open / Closing / Closed`). |
+| `SupervisedTaskStatus`, `SettleOutcome`, `SupervisorLifecycle`, `SupervisedTaskSnapshot`, `SupervisorSnapshot`, `SpawnRefusal` | Supervisor vocabulary, all owned by this library. |
 
 ## Usage
 
@@ -239,6 +248,108 @@ async test "close then join" {
   join()` **before** leaving the scope.
 - An `ask` issued just before `close` proves ordering by FIFO: its reply
   certifies every message enqueued before it was already served.
+
+## Supervisor: bounded task settlement
+
+Supervisor is introduced in Fuwaroid 0.3.0.
+
+`Supervisor` is a separate, lightweight structured-concurrency utility
+that lives next to Fuwaroid, not inside it:
+
+> Fuwaroid serializes mutable state. Supervisor owns cancellable async
+> work. Neither is an actor system.
+
+It answers one concrete lifecycle need: *cancel these tasks, then bound
+this settlement operation by one overall deadline, reporting any
+stragglers in their real status instead of waiting on each selected task
+indefinitely*. This is the seam a cleanup path needs when it would
+otherwise end with an unbounded `cancel -> Task::wait` sequence inside a
+cancellation-shielded scope.
+
+```mbt nocheck
+async test "supervisor settles a selected foreground set" {
+  @async.with_task_group(group => {
+    let sup = @fuwaroid.Supervisor(group~)
+    let foreground = []
+    for i in 0..<2 {
+      match sup.spawn(() => i, label="fg\{i}") {
+        Ok(handle) => foreground.push(handle)
+        Err(_) => abort("open supervisor refuses nothing")
+      }
+    }
+    // Background work is spawned the same way and simply never selected;
+    // it keeps running while the foreground set settles.
+    let outcome = sup.cancel_and_wait(
+      tasks=foreground.clamped_view(),
+      timeout_ms=5000,
+    )
+    debug_inspect(outcome, content="Settled")
+    // Later: stop owning tasks altogether.
+    debug_inspect(sup.shutdown(timeout_ms=5000), content="Settled")
+  })
+}
+```
+
+Semantics that matter:
+
+- **Ownership without ceremony.** A supervisor is bound to an existing
+  host `TaskGroup` and creates no runtime. Spawned tasks are real
+  children of the host group: when the host scope ends, remaining tasks
+  are cancelled by the group exactly like any other child. Ordinary
+  failures keep the host group's own fail-fast behavior — the supervisor
+  never swallows them.
+- **`cancel` is a request, not a verdict.** It records `Cancelling`
+  synchronously and idempotently, and never demotes a terminal status.
+  The race outcome is honest: a worker that finishes before observing
+  the request ends `Completed` (or `Failed`), not `Cancelled`.
+- **`wait` is `Task::wait`.** Results, original error identity and
+  `@async.TaskCancelled` for a cancelled target come straight from the
+  underlying task; handles stay waitable after the supervisor's live
+  registry has reaped their task, with any number of waiters.
+- **One deadline for the whole settlement operation.** `cancel_and_wait`
+  computes `deadline = now + timeout_ms` once; every selected task shares
+  it. Waiting for N tasks never costs N × timeout inside Supervisor. On
+  expiry, `DeadlineExceeded` carries snapshots of exactly the
+  still-nonterminal selected tasks in their TRUE status (`Running` /
+  `Cancelling`) — it never fabricates a terminal status, never clears the
+  live registry, and the stragglers may still terminate later.
+- **The deadline works from shielded contexts.** Settlement runs in a
+  local task group of waiter helpers plus one timer, so it never relies
+  on "cancel the caller to stop the wait" — it is safe to call from
+  cleanup code running under `@async.protect_from_cancel`. Cancelling
+  the settlement caller tears down only the helpers; a waiter helper's
+  cancellation never reaches its target.
+- **Shutdown is admission control plus settlement.** The first
+  `shutdown` closes admission synchronously and forever (`Open ->
+  Closing -> Closed`; `spawn` refuses with `SupervisorClosed` from that
+  moment), then cancels and bounded-settles exactly the tasks that were
+  live at entry. Repeated `shutdown`s are safe; after a deadline
+  exceeded they can wait again for the stragglers, and the registry
+  converges by itself once those terminate.
+
+**Structured-exit limitation.** Supervisor bounds its own settlement
+operation; it does not detach tasks from the host `TaskGroup` and cannot
+weaken that group's structured-exit rule. If unresolved supervised tasks
+remain when the owning `with_task_group` body returns, the host group
+will still wait for those children to terminate. A
+`DeadlineExceeded` result therefore does **not** mean the owning task
+group itself has a bounded exit time.
+
+**Cooperative-runtime limitation — read this before relying on the
+deadline.** MoonBit's async runtime is single-threaded and cooperative:
+cancellation and timers are observed only at suspension points, and a
+worker that never yields cannot be interrupted at all. Bounded
+settlement is therefore not hard real-time preemption, and nothing can
+force-kill a coroutine. What `Supervisor` guarantees: as long as the
+scheduler still gets execution opportunities, waiting on a suspended or
+cancellation-nonresponsive task does not block the lifecycle forever —
+the deadline expires and the stragglers are reported as they are.
+
+Not an actor framework: no actor registry, no supervision tree, no
+restart, no linking, no remote addressing — and no application metadata
+(session ids, receipts, business tags) inside the supervisor. A task is
+`id` (unique and monotonic within the supervisor's lifetime), an
+optional `label`, and a lifecycle status; that is the whole identity.
 
 ## Mailbox configuration
 

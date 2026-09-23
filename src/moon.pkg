@@ -1,6 +1,7 @@
 import {
   "moonbitlang/async",
   "moonbitlang/async/aqueue",
+  "moonbitlang/core/debug",
 }
 
 warnings = "-unused_package"

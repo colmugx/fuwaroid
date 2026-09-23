@@ -132,8 +132,8 @@ pub fn SupervisedTaskStatus::to_repr(Self) -> @debug.Repr
 pub struct Supervisor[X] {
   // private fields
 }
-pub async fn[X] Supervisor::cancel_and_wait(Self[X], tasks~ : ArrayView[SupervisedTask[X]], timeout_ms~ : Int) -> SettleOutcome
 pub fn[G, X] Supervisor::Supervisor(group~ : @async.TaskGroup[G]) -> Self[X]
+pub async fn[X] Supervisor::cancel_and_wait(Self[X], tasks~ : ArrayView[SupervisedTask[X]], timeout_ms~ : Int) -> SettleOutcome
 pub async fn[X] Supervisor::shutdown(Self[X], timeout_ms~ : Int) -> SettleOutcome
 pub fn[X] Supervisor::snapshot(Self[X]) -> SupervisorSnapshot
 pub fn[X] Supervisor::spawn(Self[X], async () -> X, label? : String) -> Result[SupervisedTask[X], SpawnRefusal]

@@ -88,9 +88,10 @@ fn supervisor_status_transition(
     (Running, Completed) | (Running, Cancelled) | (Running, Failed) => true
     (Cancelling, Completed) | (Cancelling, Cancelled) | (Cancelling, Failed) =>
       true
-    (Running, _) | (Cancelling, _) | (Completed, _) | (Cancelled, _) | (
-      Failed,
-      _,
-    ) => false
+    (Running, _)
+    | (Cancelling, _)
+    | (Completed, _)
+    | (Cancelled, _)
+    | (Failed, _) => false
   }
 }

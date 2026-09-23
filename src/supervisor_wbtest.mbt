@@ -2,11 +2,16 @@
 /// White-box invariants for status transitions, sticky cancellation, and
 /// original error propagation.
 ///
+
 ///|
 test "W01 forward-only transition table" {
   let terminals : Array[SupervisedTaskStatus] = [Completed, Cancelled, Failed]
   let statuses : Array[SupervisedTaskStatus] = [
-    Running, Cancelling, Completed, Cancelled, Failed,
+    Running,
+    Cancelling,
+    Completed,
+    Cancelled,
+    Failed,
   ]
   for next in terminals {
     assert_true(
@@ -89,7 +94,9 @@ async test "W03 failed task records error text and keeps original propagation" {
         Err(_) => abort("W03: unexpected spawn refusal")
       }
     }),
-  ) catch { error => Err(error) }
+  ) catch {
+    error => Err(error)
+  }
   match inner {
     Err(WBoom(msg)) => assert_eq(msg, "w03-original")
     _ => abort("W03: the original WBoom must escape the inner scope")

@@ -26,10 +26,12 @@ pub struct SupervisedTask[X] {
 
 ///|
 /// Bind to a host TaskGroup of any result type.
-pub fn[G, X] Supervisor::Supervisor(group~ : @async.TaskGroup[G]) -> Supervisor[X] {
+pub fn[G, X] Supervisor::Supervisor(
+  group~ : @async.TaskGroup[G],
+) -> Supervisor[X] {
   {
     spawn_task: fn(worker) { group.spawn(no_wait=true, worker) },
-    state: { next_id: 1, lifecycle: Open, live: [] },
+    state: { next_id: 1, lifecycle: Open, live: [], },
   }
 }
 
@@ -150,10 +152,18 @@ pub async fn[X] SupervisedTask::wait(self : SupervisedTask[X]) -> X {
 pub fn[X] SupervisedTask::snapshot(
   self : SupervisedTask[X],
 ) -> SupervisedTaskSnapshot {
-  { id: self.id, label: self.label, status: self.status, error_text: self.error_text }
+  {
+    id: self.id,
+    label: self.label,
+    status: self.status,
+    error_text: self.error_text,
+  }
 }
 
 ///|
 pub fn[X] Supervisor::snapshot(self : Supervisor[X]) -> SupervisorSnapshot {
-  { lifecycle: self.state.lifecycle, tasks: self.state.live.map(task => task.snapshot()) }
+  {
+    lifecycle: self.state.lifecycle,
+    tasks: self.state.live.map(task => task.snapshot()),
+  }
 }

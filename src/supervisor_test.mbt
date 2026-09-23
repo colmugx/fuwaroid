@@ -52,10 +52,7 @@ async test "S01 successful task completes, delivers value, leaves registry" {
       },
       label="answer",
     )
-    assert_eq(
-      handle.snapshot().status,
-      @fuwaroid.SupervisedTaskStatus::Running,
-    )
+    assert_eq(handle.snapshot().status, @fuwaroid.SupervisedTaskStatus::Running)
     let _ = gate.try_put(())
     assert_eq(handle.wait(), 42)
     assert_eq(
@@ -86,7 +83,9 @@ async test "S02 failure propagates original error and host group semantics" {
         Err(_) => abort("S02: unexpected spawn refusal")
       }
     }),
-  ) catch { error => Err(error) }
+  ) catch {
+    error => Err(error)
+  }
   // The host group's fail-fast is preserved: the scope fails with the
   // worker's original error value, not a supervisor-made substitute.
   match inner {
@@ -95,18 +94,12 @@ async test "S02 failure propagates original error and host group semantics" {
   }
   let sup = sup_cell.val.unwrap()
   let handle = handle_cell.val.unwrap()
-  assert_eq(
-    handle.snapshot().status,
-    @fuwaroid.SupervisedTaskStatus::Failed,
-  )
+  assert_eq(handle.snapshot().status, @fuwaroid.SupervisedTaskStatus::Failed)
   match handle.snapshot().error_text {
     Some(text) =>
       // The contract: the ORIGINAL error is propagated unchanged (matched
       // above); the snapshot additionally carries it rendered as text.
-      assert_true(
-        text.length() > 0,
-        msg="S02: error text must be non-empty",
-      )
+      assert_true(text.length() > 0, msg="S02: error text must be non-empty")
     None => abort("S02: a Failed task must record error text")
   }
   assert_eq(sup.snapshot().tasks.length(), 0)
@@ -196,22 +189,13 @@ async test "S06 selected cancellation leaves unselected tasks running" {
       timeout_ms=500,
     )
     assert_eq(outcome, @fuwaroid.Settled)
-    assert_eq(
-      a.snapshot().status,
-      @fuwaroid.SupervisedTaskStatus::Cancelled,
-    )
-    assert_eq(
-      b.snapshot().status,
-      @fuwaroid.SupervisedTaskStatus::Cancelled,
-    )
+    assert_eq(a.snapshot().status, @fuwaroid.SupervisedTaskStatus::Cancelled)
+    assert_eq(b.snapshot().status, @fuwaroid.SupervisedTaskStatus::Cancelled)
     assert_eq(c.snapshot().status, @fuwaroid.SupervisedTaskStatus::Running)
     assert_eq(sup.snapshot().tasks.length(), 1)
     let _ = park_c.try_put(())
     assert_eq(c.wait(), 6)
-    assert_eq(
-      c.snapshot().status,
-      @fuwaroid.SupervisedTaskStatus::Completed,
-    )
+    assert_eq(c.snapshot().status, @fuwaroid.SupervisedTaskStatus::Completed)
     assert_eq(sup.snapshot().tasks.length(), 0)
     ignore(group)
   })
@@ -266,8 +250,7 @@ async test "S08 deadline exceeds a protected task, reports truth, converges afte
         match snapshots[0].status {
           @fuwaroid.SupervisedTaskStatus::Running
           | @fuwaroid.SupervisedTaskStatus::Cancelling => ()
-          _ =>
-            abort("S08: unresolved task must stay nonterminal in the report")
+          _ => abort("S08: unresolved task must stay nonterminal in the report")
         }
       }
     }
@@ -311,7 +294,10 @@ async test "S09 deadline is global, not multiplied by the task count" {
       @fuwaroid.DeadlineExceeded(snapshots) => assert_eq(snapshots.length(), 8)
     }
     assert_true(elapsed >= 150L, msg="S09: deadline fired early")
-    assert_true(elapsed < 1_000L, msg="S09: deadline scaled with the task count")
+    assert_true(
+      elapsed < 1_000L,
+      msg="S09: deadline scaled with the task count",
+    )
     for gate in gates {
       let _ = gate.try_put(())
     }
@@ -475,16 +461,16 @@ async test "S15 shielded cancelled caller still observes settlement deadline" {
     let sup = @fuwaroid.Supervisor(group~)
     let gate : @aqueue.Queue[Unit] = @aqueue.Queue(kind=@aqueue.Unbounded)
     let target = s_spawn_ok(sup, s_gated(gate, 5), label="shielded-target")
-    let caller_entered : @aqueue.Queue[Unit] = @aqueue.Queue(kind=@aqueue.Unbounded)
+    let caller_entered : @aqueue.Queue[Unit] = @aqueue.Queue(
+      kind=@aqueue.Unbounded,
+    )
     let deadline_observed : Ref[Bool] = Ref(false)
 
     let caller = group.spawn(() => {
       @async.protect_from_cancel(() => {
         let _ = caller_entered.try_put(())
-        match sup.cancel_and_wait(
-          tasks=[target].clamped_view(),
-          timeout_ms=120,
-        ) {
+        match
+          sup.cancel_and_wait(tasks=[target].clamped_view(), timeout_ms=120) {
           @fuwaroid.Settled =>
             abort("S15: protected target must outlive the settlement deadline")
           @fuwaroid.DeadlineExceeded(snapshots) => {

@@ -52,7 +52,9 @@ pub async fn[X] Supervisor::cancel_and_wait(
   }
 
   @async.with_task_group(group => {
-    let events : @aqueue.Queue[SettleEvent] = @aqueue.Queue(kind=@aqueue.Unbounded)
+    let events : @aqueue.Queue[SettleEvent] = @aqueue.Queue(
+      kind=@aqueue.Unbounded,
+    )
 
     for target in unresolved {
       group.spawn_bg(no_wait=true, allow_failure=true, () => {

@@ -540,8 +540,7 @@ async test "T15 stop reason keeps its original identity through cleanup and join
     match outcome {
       Err(@async.TaskCancelled) => ()
       Err(other) => fail("T15b: expected TaskCancelled, got \{other}")
-      Ok(_) =>
-        fail("T15b: the cancelled loop ended as a normal completion")
+      Ok(_) => fail("T15b: the cancelled loop ended as a normal completion")
     }
     // The recorded reason is `Cancelled`: the cancellation signal is not
     // an `Error`, so no error value is fabricated for it.

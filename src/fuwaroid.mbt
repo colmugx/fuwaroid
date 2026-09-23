@@ -331,8 +331,9 @@ async fn[State, Cmd, Query, Reply] fuwaroid_loop(
   stop~ : LoopStop,
 ) -> Unit {
   let outcome : Result[Unit?, Error] = Ok(
-    @async.handle_cancellation(() =>
-      fuwaroid_serve(ctx, init, on_cmd, on_query, queue, stop~)),
+    @async.handle_cancellation(() => {
+      fuwaroid_serve(ctx, init, on_cmd, on_query, queue, stop~)
+    }),
   ) catch {
     // Only ordinary errors arrive here: `catch` cannot capture the
     // cancellation signal, and `handle_cancellation` reports cancellation

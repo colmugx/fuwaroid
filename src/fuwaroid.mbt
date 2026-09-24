@@ -208,10 +208,7 @@ fn LoopStop::fresh() -> LoopStop {
 }
 
 ///|
-/// Named no-op query handler used by `spawn_fold`. Keeping the receipt
-/// behavior as a generic function value gives the compiler a stable,
-/// specialization-friendly target instead of rebuilding an anonymous
-/// closure at each call site.
+/// No-op query handler for `spawn_fold`.
 #inline
 fn[State, Cmd] fold_receipt_query(
   _ctx : Ctx[Cmd, Unit, Unit],
@@ -342,18 +339,10 @@ fn[State, Cmd, Query, Reply] settle_envelope(
 }
 
 ///|
-/// Mark one leftover envelope abandoned and fail a stranded ask when needed.
-/// The generic exhaustive match keeps cleanup policy attached to the envelope
-/// vocabulary without duplicating diagnostics accounting across constructors.
 #inline
 fn[Cmd, Query, Reply] abandon_envelope(
   envelope : Envelope[Cmd, Query, Reply],
-  diag : Diag?,
 ) -> Unit {
-  match diag {
-    Some(d) => d.abandoned = d.abandoned + 1L
-    None => ()
-  }
   match envelope {
     Ask(_, reply) => reply.close(error=StoppedError)
     Tell(_) => ()
@@ -361,42 +350,7 @@ fn[Cmd, Query, Reply] abandon_envelope(
 }
 
 ///|
-/// The serial drain, wrapped in the loop task's cancellation boundary.
-/// In `moonbitlang/async` 0.22.x cancellation is a distinct runtime
-/// signal: ordinary `catch` only sees `Error` values and can never
-/// capture it. The structure is therefore:
-///
-/// - The REAL serving loop (`fuwaroid_serve`) runs inside a cancellable
-///   callback under `@async.handle_cancellation`. It handles the two
-///   error-shaped dispositions itself — the graceful closed-and-empty
-///   drain (`QueueAlreadyClosed`) and ordinary terminal mailbox errors —
-///   by running the unified cleanup (`fuwaroid_cleanup`) and re-raising
-///   the original cause for a `Failed` stop.
-/// - The outermost boundary distinguishes the three terminal
-///   dispositions: `Some(())` = the serving loop completed (graceful,
-///   reason already recorded); `Err(original)` = an ordinary error
-///   escaped (the recorded `Failed` cause re-raised by cleanup —
-///   propagation keeps the ORIGINAL identity); `None` = the host
-///   cancelled the loop while it was serving.
-/// - In the cancellation branch the task is in the sticky cancelled
-///   state. The unified cleanup still runs — under
-///   `@async.protect_from_cancel`, so it completes in full — and records
-///   `Cancelled`. The original cancellation is then re-propagated by
-///   entering one unprotected cancellation point (`@async.pause()`),
-///   which raises the still-pending cancellation signal (see `pause`:
-///   a cancelled, unshielded task raises immediately). The loop task
-///   therefore terminates CANCELLED — never as a normal completion —
-///   and an external `Task::wait` observer sees `@async.TaskCancelled`.
-///
-/// Cancellation outranks draining: the loop stops at the next
-/// observable cancellation boundary — the batch yield after the message
-/// currently being served, or the next blocking `get` — instead of
-/// finishing the whole backlog. A message that `queue.get` already
-/// delivered when cancellation lands is still served: `try_get` does not
-/// observe cancellation, so one accepted message is never dropped
-/// mid-batch. Between complete messages there is still no suspension
-/// point: handler entry → handler return → state commit is atomic to the
-/// cooperative runtime.
+/// Cancellation is handled separately from ordinary loop errors.
 async fn[State, Cmd, Query, Reply] fuwaroid_loop(
   ctx : Ctx[Cmd, Query, Reply],
   init : State,
@@ -405,36 +359,14 @@ async fn[State, Cmd, Query, Reply] fuwaroid_loop(
   queue : @aqueue.Queue[Envelope[Cmd, Query, Reply]],
   stop~ : LoopStop,
 ) -> Unit {
-  let outcome : Result[Unit?, Error] = Ok(
-    @async.handle_cancellation(() => {
-      fuwaroid_serve(ctx, init, on_cmd, on_query, queue, stop~)
-    }),
-  ) catch {
-    // Only ordinary errors arrive here: `catch` cannot capture the
-    // cancellation signal, and `handle_cancellation` reports cancellation
-    // as `None` instead.
-    error => Err(error)
-  }
-  match outcome {
-    // The serving loop returned after running its unified cleanup;
-    // a `Failed` cause was re-raised out of it, so reaching here
-    // normally means the graceful drain completed.
-    Ok(Some(_)) => ()
-    // Host cancellation observed inside the serving loop. Cleanup first
-    // (protected: cancellation is sticky), then let the original
-    // cancellation continue propagating so this task ends cancelled.
-    Ok(None) => {
+  match @async.handle_cancellation(() => {
+    fuwaroid_serve(ctx, init, on_cmd, on_query, queue, stop~)
+  }) {
+    Some(_) => ()
+    None => {
       fuwaroid_cleanup(queue, Cancelled, stop)
-      // Unprotected cancellation point: the task is still in the
-      // cancelled state, so this raises the pending cancellation signal
-      // and the coroutine terminates cancelled (never as normal Done).
       @async.pause()
     }
-    // Ordinary error escaped the serving loop: the original cause
-    // re-raised by its cleanup (a graceful stop's secondary cleanup
-    // failure arrives here the same way). The recorded reason already
-    // holds it; propagation keeps the ORIGINAL identity.
-    Err(original) => raise original
   }
 }
 
@@ -456,15 +388,25 @@ async fn[State, Cmd, Query, Reply] fuwaroid_serve(
       let state = settle_envelope(ctx, state, envelope, on_cmd, on_query)
       let served = served + 1
       let unpublished = unpublished + 1
+
       if served >= fuwaroid_yield_batch {
-        stop.diag.processed += unpublished.to_int64()
+        stop.diag.add_processed(unpublished)
         @async.pause()
         continue queue.get(), state, 0, 0
       }
-      match queue.try_get() {
+
+      let next = try {
+        queue.try_get()
+      } catch {
+        error => {
+          stop.diag.add_processed(unpublished)
+          raise error
+        }
+      }
+      match next {
         Some(next) => continue next, state, served, unpublished
         None => {
-          stop.diag.processed += unpublished.to_int64()
+          stop.diag.add_processed(unpublished)
           continue queue.get(), state, served, 0
         }
       }
@@ -514,14 +456,11 @@ async fn[Cmd, Query, Reply] fuwaroid_cleanup(
   // was accepted but is provably unserved — commands and queries alike
   // are counted as abandoned. Admission is closed before any yield.
   // Shield the whole drain so cancellation cannot strand remaining asks.
-  let drained : Result[Unit, Error] = Ok(
-    @async.protect_from_cancel(() => fail_leftover_asks(queue, diag=stop.diag)),
-  ) catch {
-    error => Err(error)
-  }
-  let secondary : Error? = match drained {
-    Ok(_) => None
-    Err(error) => Some(error)
+  let secondary : Error? = try {
+    @async.protect_from_cancel(() => fail_leftover_asks(queue, diag=stop.diag))
+    None
+  } catch {
+    error => Some(error)
   }
   stop.reason = Some(reason)
   stop.cleanup_error = secondary
@@ -544,39 +483,51 @@ async fn[Cmd, Query, Reply] fuwaroid_cleanup(
 }
 
 ///|
-/// After an abnormal stop (host cancellation), asks may still sit in the
-/// mailbox; their callers wait on reply queues that will never be filled.
-/// Close each so every waiter fails fast with `StoppedError`. On a
-/// graceful `close` the mailbox is already empty-and-closed here, and the
-/// first `try_get` raises `QueueAlreadyClosed` — a no-op. Any other queue
-/// error is propagated so cleanup cannot hide a failure.
-///
-/// Every envelope removed here (commands AND queries) is counted as
-/// `abandoned` on the given diagnostics cell, when one is supplied: the
-/// drain is the exact truncation point between "accepted and served" and
-/// "accepted but unserved". Direct white-box callers that pass
-/// no cell only get the draining behavior.
+/// Drain accepted-but-unserved messages after admission closes.
 async fn[Cmd, Query, Reply] fail_leftover_asks(
   queue : @aqueue.Queue[Envelope[Cmd, Query, Reply]],
   diag? : Diag,
 ) -> Unit {
-  let mut draining = true
-  let mut drained_in_batch = 0
-  while draining {
-    let next : Result[Envelope[Cmd, Query, Reply]?, Error] = Ok(queue.try_get()) catch {
-      error => Err(error)
+  for abandoned = 0 {
+    let next = try {
+      queue.try_get()
+    } catch {
+      @aqueue.QueueAlreadyClosed => {
+        match diag {
+          Some(d) => d.add_abandoned(abandoned)
+          None => ()
+        }
+        break ()
+      }
+      error => {
+        match diag {
+          Some(d) => d.add_abandoned(abandoned)
+          None => ()
+        }
+        raise error
+      }
     }
+
     match next {
-      Ok(Some(envelope)) => abandon_envelope(envelope, diag)
-      Ok(None) => draining = false
-      Err(@aqueue.QueueAlreadyClosed) => draining = false
-      Err(error) => raise error
-    }
-    if draining {
-      drained_in_batch += 1
-      if drained_in_batch >= fuwaroid_yield_batch {
-        drained_in_batch = 0
-        @async.pause()
+      Some(envelope) => {
+        abandon_envelope(envelope)
+        let abandoned = abandoned + 1
+        if abandoned >= fuwaroid_yield_batch {
+          match diag {
+            Some(d) => d.add_abandoned(abandoned)
+            None => ()
+          }
+          @async.pause()
+          continue 0
+        }
+        continue abandoned
+      }
+      None => {
+        match diag {
+          Some(d) => d.add_abandoned(abandoned)
+          None => ()
+        }
+        break ()
       }
     }
   }
@@ -627,15 +578,13 @@ pub async fn[Cmd, Query, Reply] Fuwaroid::ask(
     Ok(_) => ()
     Err(refusal) => return Err(AskFailure::NotDelivered(refusal))
   }
-  let outcome : Result[Reply?, Error] = Ok(
-    @async.with_timeout_opt(timeout_ms, () => reply.get()),
-  ) catch {
-    error => Err(error)
-  }
-  match outcome {
-    Ok(Some(answer)) => Ok(answer)
-    Ok(None) => Err(AskFailure::TimedOut)
-    Err(error) =>
+  try {
+    match @async.with_timeout_opt(timeout_ms, () => reply.get()) {
+      Some(answer) => Ok(answer)
+      None => Err(AskFailure::TimedOut)
+    }
+  } catch {
+    error =>
       match classify_ask_error(error) {
         Some(failure) => Err(failure)
         None => raise error

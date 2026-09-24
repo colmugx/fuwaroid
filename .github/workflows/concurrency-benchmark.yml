@@ -9,7 +9,7 @@ on:
         required: true
         type: string
   push:
-    branches: [main]
+    branches: [main, perf/specialize-spawn-fold]
 
 permissions:
   contents: read

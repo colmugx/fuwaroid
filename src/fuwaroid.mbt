@@ -222,28 +222,22 @@ fn[State, Cmd] fold_receipt_query(
 }
 
 ///|
-/// Typed admission primitive shared by `tell` and `ask`. The caller
-/// constructs the `Envelope`; this helper owns the queue result mapping and
-/// all admission diagnostics. It is deliberately small and inlineable so the
-/// abstraction can disappear after generic specialization.
+/// Shared admission path for `tell` and `ask`.
 #inline
 fn[Cmd, Query, Reply] Fuwaroid::admit(
   self : Fuwaroid[Cmd, Query, Reply],
   envelope : Envelope[Cmd, Query, Reply],
 ) -> Result[Unit, SendRefusal] {
-  let delivered : Result[Bool, Error] = Ok(self.mailbox.try_put(envelope)) catch {
-    error => Err(error)
-  }
-  match delivered {
-    Ok(true) => {
+  try {
+    if self.mailbox.try_put(envelope) {
       self.stop.diag.accepted += 1L
       Ok(())
-    }
-    Ok(false) => {
+    } else {
       self.stop.diag.rejected_full += 1L
       Err(SendRefusal::MailboxFull)
     }
-    Err(_) => {
+  } catch {
+    _ => {
       self.stop.diag.rejected_closed += 1L
       Err(SendRefusal::MailboxClosed)
     }
@@ -329,10 +323,6 @@ pub fn[State, Cmd] Fuwaroid::spawn_fold(
 let fuwaroid_yield_batch : Int = 32
 
 ///|
-/// Settle one typed mailbox envelope. The higher-order handlers remain
-/// explicit parameters so MoonBit can specialize this generic helper together
-/// with the concrete actor state and message types, then inline the exhaustive
-/// `Envelope` match into the serving loop.
 #inline
 fn[State, Cmd, Query, Reply] settle_envelope(
   ctx : Ctx[Cmd, Query, Reply],
@@ -449,22 +439,7 @@ async fn[State, Cmd, Query, Reply] fuwaroid_loop(
 }
 
 ///|
-/// The message loop proper. When idle (or after a partially filled batch
-/// drains), one `queue.get` provides the suspension/cancellation boundary.
-/// Once an envelope is available, the loop drains the rest of the current
-/// fairness batch synchronously with `try_get`; a non-empty backlog therefore
-/// pays the async `get` path once per scheduler batch instead of once per
-/// message.
-///
-/// The batch size and observable scheduling contract are unchanged: after
-/// exactly `fuwaroid_yield_batch` complete messages since the previous yield,
-/// the loop pauses before taking another message. If the mailbox becomes empty
-/// earlier, the next `queue.get` parks immediately. Ordinary queue errors
-/// leave the serving loop through one outer error boundary; cancellation is
-/// not an `Error` in async 0.22.x and bypasses that boundary unchanged.
-///
-/// On any ordinary exit the unified cleanup runs with the mapped reason and
-/// re-raises the original cause for a `Failed` stop.
+/// Drain ready messages synchronously; publish diagnostics before suspension.
 async fn[State, Cmd, Query, Reply] fuwaroid_serve(
   ctx : Ctx[Cmd, Query, Reply],
   init : State,
@@ -473,45 +448,30 @@ async fn[State, Cmd, Query, Reply] fuwaroid_serve(
   queue : @aqueue.Queue[Envelope[Cmd, Query, Reply]],
   stop~ : LoopStop,
 ) -> Unit {
-  let mut state = init
-  let mut served_in_batch = 0
   let reason : StopReason = try {
-    while true {
-      // The first take may suspend. If a previous partial batch exhausted the
-      // mailbox, this is the point where the loop parks until more work arrives.
-      let envelope = queue.get()
-      state = settle_envelope(ctx, state, envelope, on_cmd, on_query)
-      stop.diag.processed = stop.diag.processed + 1L
-      served_in_batch += 1
-
-      // A ready backlog needs no async suspension check between complete
-      // messages: fairness/cancellation is deliberately observed at the same
-      // batch boundary as before. Stop before probing past that boundary so a
-      // full batch always yields prior to taking message batch+1.
-      while served_in_batch < fuwaroid_yield_batch {
-        match queue.try_get() {
-          Some(next) => {
-            state = settle_envelope(ctx, state, next, on_cmd, on_query)
-            stop.diag.processed = stop.diag.processed + 1L
-            served_in_batch += 1
-          }
-          None => break
+    for envelope = queue.get(),
+        state = init,
+        served = 0,
+        unpublished = 0 {
+      let state = settle_envelope(ctx, state, envelope, on_cmd, on_query)
+      let served = served + 1
+      let unpublished = unpublished + 1
+      if served >= fuwaroid_yield_batch {
+        stop.diag.processed += unpublished.to_int64()
+        @async.pause()
+        continue queue.get(), state, 0, 0
+      }
+      match queue.try_get() {
+        Some(next) => continue next, state, served, unpublished
+        None => {
+          stop.diag.processed += unpublished.to_int64()
+          continue queue.get(), state, served, 0
         }
       }
-
-      // Yield only after a full batch. A partial batch falls through and the
-      // next outer `queue.get` either takes newly-arrived work or suspends.
-      if served_in_batch >= fuwaroid_yield_batch {
-        served_in_batch = 0
-        @async.pause()
-      }
     }
-    // Unreachable in normal control flow; keeps the try expression total.
     Graceful
   } catch {
-    // Closed-and-empty is the graceful drain terminator.
     @aqueue.QueueAlreadyClosed => Graceful
-    // Any other ordinary mailbox failure keeps its original identity.
     original => Failed(original)
   }
   fuwaroid_cleanup(queue, reason, stop)

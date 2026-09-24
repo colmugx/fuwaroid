@@ -208,6 +208,49 @@ fn LoopStop::fresh() -> LoopStop {
 }
 
 ///|
+/// Named no-op query handler used by `spawn_fold`. Keeping the receipt
+/// behavior as a generic function value gives the compiler a stable,
+/// specialization-friendly target instead of rebuilding an anonymous
+/// closure at each call site.
+#inline
+fn[State, Cmd] fold_receipt_query(
+  _ctx : Ctx[Cmd, Unit, Unit],
+  state : State,
+  _query : Unit,
+) -> (State, Unit) {
+  (state, ())
+}
+
+///|
+/// Typed admission primitive shared by `tell` and `ask`. The caller
+/// constructs the `Envelope`; this helper owns the queue result mapping and
+/// all admission diagnostics. It is deliberately small and inlineable so the
+/// abstraction can disappear after generic specialization.
+#inline
+fn[Cmd, Query, Reply] Fuwaroid::admit(
+  self : Fuwaroid[Cmd, Query, Reply],
+  envelope : Envelope[Cmd, Query, Reply],
+) -> Result[Unit, SendRefusal] {
+  let delivered : Result[Bool, Error] = Ok(self.mailbox.try_put(envelope)) catch {
+    error => Err(error)
+  }
+  match delivered {
+    Ok(true) => {
+      self.stop.diag.accepted += 1L
+      Ok(())
+    }
+    Ok(false) => {
+      self.stop.diag.rejected_full += 1L
+      Err(SendRefusal::MailboxFull)
+    }
+    Err(_) => {
+      self.stop.diag.rejected_closed += 1L
+      Err(SendRefusal::MailboxClosed)
+    }
+  }
+}
+
+///|
 /// Spawn a Fuwaroid on the host's long-lived task group. Commands and
 /// queries are SEPARATE types: `on_cmd` folds a command into the state,
 /// `on_query` folds a query and produces its reply — neither handler has
@@ -272,7 +315,7 @@ pub fn[State, Cmd] Fuwaroid::spawn_fold(
     group~,
     init~,
     on_cmd~,
-    on_query=(_, state, _) => (state, ()),
+    on_query=fold_receipt_query,
     mailbox~,
   )
 }
@@ -284,6 +327,48 @@ pub fn[State, Cmd] Fuwaroid::spawn_fold(
 /// cancellation observation. 32 is a starting point — retune it with the
 /// benchmark harness, not by intuition.
 let fuwaroid_yield_batch : Int = 32
+
+///|
+/// Settle one typed mailbox envelope. The higher-order handlers remain
+/// explicit parameters so MoonBit can specialize this generic helper together
+/// with the concrete actor state and message types, then inline the exhaustive
+/// `Envelope` match into the serving loop.
+#inline
+fn[State, Cmd, Query, Reply] settle_envelope(
+  ctx : Ctx[Cmd, Query, Reply],
+  state : State,
+  envelope : Envelope[Cmd, Query, Reply],
+  on_cmd : (Ctx[Cmd, Query, Reply], State, Cmd) -> State,
+  on_query : (Ctx[Cmd, Query, Reply], State, Query) -> (State, Reply),
+) -> State {
+  match envelope {
+    Tell(cmd) => on_cmd(ctx, state, cmd)
+    Ask(query, reply) => {
+      let (next_state, answer) = on_query(ctx, state, query)
+      let _ = reply.try_put(answer) catch { _ => false }
+      next_state
+    }
+  }
+}
+
+///|
+/// Mark one leftover envelope abandoned and fail a stranded ask when needed.
+/// The generic exhaustive match keeps cleanup policy attached to the envelope
+/// vocabulary without duplicating diagnostics accounting across constructors.
+#inline
+fn[Cmd, Query, Reply] abandon_envelope(
+  envelope : Envelope[Cmd, Query, Reply],
+  diag : Diag?,
+) -> Unit {
+  match diag {
+    Some(d) => d.abandoned = d.abandoned + 1L
+    None => ()
+  }
+  match envelope {
+    Ask(_, reply) => reply.close(error=StoppedError)
+    Tell(_) => ()
+  }
+}
 
 ///|
 /// The serial drain, wrapped in the loop task's cancellation boundary.
@@ -392,18 +477,10 @@ async fn[State, Cmd, Query, Reply] fuwaroid_serve(
       error => Err(error)
     }
     match next {
-      Ok(Tell(cmd)) => {
-        state = on_cmd(ctx, state, cmd)
-        // Counting point: the handler returned, the state is committed.
-        stop.diag.processed = stop.diag.processed + 1L
-        served_in_batch += 1
-      }
-      Ok(Ask(query, reply)) => {
-        let pair = on_query(ctx, state, query)
-        state = pair.0
-        let _ = reply.try_put(pair.1) catch { _ => false }
+      Ok(envelope) => {
+        state = settle_envelope(ctx, state, envelope, on_cmd, on_query)
         // Counting point: the handler returned, the state is committed
-        // (the reply handoff is best-effort and not part of the criterion).
+        // (an ask reply handoff is best-effort and not part of the criterion).
         stop.diag.processed = stop.diag.processed + 1L
         served_in_batch += 1
       }
@@ -521,18 +598,7 @@ async fn[Cmd, Query, Reply] fail_leftover_asks(
       error => Err(error)
     }
     match next {
-      Ok(Some(Ask(_, reply))) => {
-        match diag {
-          Some(d) => d.abandoned = d.abandoned + 1L
-          None => ()
-        }
-        reply.close(error=StoppedError)
-      }
-      Ok(Some(Tell(_))) =>
-        match diag {
-          Some(d) => d.abandoned = d.abandoned + 1L
-          None => ()
-        }
+      Ok(Some(envelope)) => abandon_envelope(envelope, diag)
       Ok(None) => draining = false
       Err(@aqueue.QueueAlreadyClosed) => draining = false
       Err(error) => raise error
@@ -558,34 +624,14 @@ pub fn[Cmd, Query, Reply] Fuwaroid::tell(
   self : Fuwaroid[Cmd, Query, Reply],
   cmd : Cmd,
 ) -> Result[Unit, SendRefusal] {
-  let delivered : Result[Bool, Error] = Ok(
-    self.mailbox.try_put(Envelope::Tell(cmd)),
-  ) catch {
-    error => Err(error)
-  }
-  match delivered {
-    Ok(true) => {
-      // Counting point: admission accepted.
-      self.stop.diag.accepted += 1L
-      Ok(())
-    }
-    Ok(false) => {
-      // Counting point: admission refused, mailbox full.
-      self.stop.diag.rejected_full += 1L
-      Err(SendRefusal::MailboxFull)
-    }
-    Err(_) => {
-      // Counting point: admission refused, mailbox closed.
-      self.stop.diag.rejected_closed += 1L
-      Err(SendRefusal::MailboxClosed)
-    }
-  }
+  self.admit(Envelope::Tell(cmd))
 }
 
 ///|
 /// Pure classification of the errors `ask` can see on its reply queue:
 /// mapped failures return `Some`; `None` means "not ours" — the caller
 /// must propagate (notably host cancellation of the asker).
+#inline
 fn classify_ask_error(error : Error) -> AskFailure? {
   match error {
     StoppedError => Some(AskFailure::Stopped)
@@ -608,25 +654,9 @@ pub async fn[Cmd, Query, Reply] Fuwaroid::ask(
   timeout_ms~ : Int,
 ) -> Result[Reply, AskFailure] {
   let reply : @aqueue.Queue[Reply] = @aqueue.Queue(kind=@aqueue.Unbounded)
-  let delivered : Result[Bool, Error] = Ok(
-    self.mailbox.try_put(Envelope::Ask(query, reply)),
-  ) catch {
-    error => Err(error)
-  }
-  match delivered {
-    Ok(true) =>
-      // Counting point: admission accepted (queries count too).
-      self.stop.diag.accepted += 1L
-    Ok(false) => {
-      // Counting point: admission refused, mailbox full.
-      self.stop.diag.rejected_full += 1L
-      return Err(AskFailure::NotDelivered(SendRefusal::MailboxFull))
-    }
-    Err(_) => {
-      // Counting point: admission refused, mailbox closed.
-      self.stop.diag.rejected_closed += 1L
-      return Err(AskFailure::NotDelivered(SendRefusal::MailboxClosed))
-    }
+  match self.admit(Envelope::Ask(query, reply)) {
+    Ok(_) => ()
+    Err(refusal) => return Err(AskFailure::NotDelivered(refusal))
   }
   let outcome : Result[Reply?, Error] = Ok(
     @async.with_timeout_opt(timeout_ms, () => reply.get()),

@@ -302,13 +302,24 @@ pub fn[State, Cmd] Fuwaroid::spawn_fold(
   on_cmd~ : (Ctx[Cmd, Unit, Unit], State, Cmd) -> State,
   mailbox? : Mailbox = Mailbox::Unbounded,
 ) -> Fuwaroid[Cmd, Unit, Unit] {
-  Fuwaroid::spawn(
-    group~,
-    init~,
-    on_cmd~,
-    on_query=fold_receipt_query,
-    mailbox~,
-  )
+  let kind : @aqueue.Kind = match mailbox {
+    Unbounded => @aqueue.Unbounded
+    Bounded(n) =>
+      match mailbox_capacity_error(n) {
+        Some(message) =>
+          abort("fuwaroid: invalid mailbox configuration: \{message}")
+        None => @aqueue.Blocking(n)
+      }
+  }
+  let queue : @aqueue.Queue[Envelope[Cmd, Unit, Unit]] = @aqueue.Queue(kind~)
+  let stop = LoopStop::fresh()
+  let fuwaroid : Fuwaroid[Cmd, Unit, Unit] = { mailbox: queue, stop, }
+  let ctx : Ctx[Cmd, Unit, Unit] = { group, address: fuwaroid, }
+  let task = group.spawn(no_wait=true, () => {
+    fuwaroid_loop_fold(ctx, init, on_cmd, queue, stop~)
+  })
+  stop.task = Some(task)
+  fuwaroid
 }
 
 ///|
@@ -347,6 +358,66 @@ fn[Cmd, Query, Reply] abandon_envelope(
     Ask(_, reply) => reply.close(error=StoppedError)
     Tell(_) => ()
   }
+}
+
+///|
+async fn[State, Cmd] fuwaroid_loop_fold(
+  ctx : Ctx[Cmd, Unit, Unit],
+  init : State,
+  on_cmd : (Ctx[Cmd, Unit, Unit], State, Cmd) -> State,
+  queue : @aqueue.Queue[Envelope[Cmd, Unit, Unit]],
+  stop~ : LoopStop,
+) -> Unit {
+  match @async.handle_cancellation(() => {
+    fuwaroid_serve_fold(ctx, init, on_cmd, queue, stop~)
+  }) {
+    Some(_) => ()
+    None => {
+      fuwaroid_cleanup(queue, Cancelled, stop)
+      @async.pause()
+    }
+  }
+}
+
+///|
+#locals(on_cmd)
+async fn[State, Cmd] fuwaroid_serve_fold(
+  ctx : Ctx[Cmd, Unit, Unit],
+  init : State,
+  on_cmd : (Ctx[Cmd, Unit, Unit], State, Cmd) -> State,
+  queue : @aqueue.Queue[Envelope[Cmd, Unit, Unit]],
+  stop~ : LoopStop,
+) -> Unit {
+  let reason : StopReason = try {
+    for envelope = queue.get(),
+        state = init,
+        served = 0 {
+      let state = match envelope {
+        Tell(cmd) => on_cmd(ctx, state, cmd)
+        Ask(_, reply) => {
+          let _ = reply.try_put(()) catch { _ => false }
+          state
+        }
+      }
+      let served = served + 1
+      stop.diag.processed += 1L
+
+      if served >= fuwaroid_yield_batch {
+        @async.pause()
+        continue queue.get(), state, 0
+      }
+
+      match queue.try_get() {
+        Some(next) => continue next, state, served
+        None => continue queue.get(), state, served
+      }
+    }
+    Graceful
+  } catch {
+    @aqueue.QueueAlreadyClosed => Graceful
+    original => Failed(original)
+  }
+  fuwaroid_cleanup(queue, reason, stop)
 }
 
 ///|

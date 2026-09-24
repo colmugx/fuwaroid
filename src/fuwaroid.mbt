@@ -357,9 +357,10 @@ async fn[State, Cmd] fuwaroid_loop_fold(
   queue : @aqueue.Queue[Envelope[Cmd, Unit, Unit]],
   stop~ : LoopStop,
 ) -> Unit {
-  match @async.handle_cancellation(() => {
-    fuwaroid_serve_fold(ctx, init, on_cmd, queue, stop~)
-  }) {
+  match
+    @async.handle_cancellation(() => {
+      fuwaroid_serve_fold(ctx, init, on_cmd, queue, stop~)
+    }) {
     Some(_) => ()
     None => {
       fuwaroid_cleanup(queue, Cancelled, stop)
@@ -378,9 +379,7 @@ async fn[State, Cmd] fuwaroid_serve_fold(
   stop~ : LoopStop,
 ) -> Unit {
   let reason : StopReason = try {
-    for envelope = queue.get(),
-        state = init,
-        served = 0 {
+    for envelope = queue.get(), state = init, served = 0 {
       let state = match envelope {
         Tell(cmd) => on_cmd(ctx, state, cmd)
         Ask(_, reply) => {
@@ -419,9 +418,10 @@ async fn[State, Cmd, Query, Reply] fuwaroid_loop(
   queue : @aqueue.Queue[Envelope[Cmd, Query, Reply]],
   stop~ : LoopStop,
 ) -> Unit {
-  match @async.handle_cancellation(() => {
-    fuwaroid_serve(ctx, init, on_cmd, on_query, queue, stop~)
-  }) {
+  match
+    @async.handle_cancellation(() => {
+      fuwaroid_serve(ctx, init, on_cmd, on_query, queue, stop~)
+    }) {
     Some(_) => ()
     None => {
       fuwaroid_cleanup(queue, Cancelled, stop)
@@ -441,9 +441,7 @@ async fn[State, Cmd, Query, Reply] fuwaroid_serve(
   stop~ : LoopStop,
 ) -> Unit {
   let reason : StopReason = try {
-    for envelope = queue.get(),
-        state = init,
-        served = 0 {
+    for envelope = queue.get(), state = init, served = 0 {
       let state = settle_envelope(ctx, state, envelope, on_cmd, on_query)
       let served = served + 1
       stop.diag.processed += 1L
@@ -536,9 +534,7 @@ async fn[Cmd, Query, Reply] fail_leftover_asks(
   diag? : Diag,
 ) -> Unit {
   for abandoned = 0 {
-    let next = try {
-      queue.try_get()
-    } catch {
+    let next = queue.try_get() catch {
       @aqueue.QueueAlreadyClosed => {
         match diag {
           Some(d) => d.add_abandoned(abandoned)

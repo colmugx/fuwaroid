@@ -131,16 +131,16 @@ async test "T14-A snapshot conservation and lifecycle monotonicity under gracefu
 async test "T14-D self-snapshot sees prior processed messages" {
   let seen : Ref[Int64] = Ref(-1L)
   @async.with_task_group(group => {
-    let handle = @fuwaroid.Fuwaroid::spawn_fold(
-      group~,
-      init=0,
-      on_cmd=(ctx, state, _cmd) => {
-        if state == 1 {
-          seen.val = ctx.address.snapshot().processed
-        }
-        state + 1
-      },
-    )
+    let handle = @fuwaroid.Fuwaroid::spawn_fold(group~, init=0, on_cmd=(
+      ctx,
+      state,
+      _cmd,
+    ) => {
+      if state == 1 {
+        seen.val = ctx.address.snapshot().processed
+      }
+      state + 1
+    })
     let _ = handle.tell(())
     let _ = handle.tell(())
     let barrier = handle.ask((), timeout_ms=30000)

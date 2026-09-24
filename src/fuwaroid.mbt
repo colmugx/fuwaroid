@@ -449,15 +449,22 @@ async fn[State, Cmd, Query, Reply] fuwaroid_loop(
 }
 
 ///|
-/// The message loop proper: suspend on `queue.get`, serve one envelope
-/// per iteration with a synchronous handler, yield the scheduler every
-/// `fuwaroid_yield_batch` complete messages. The loop exits on the first
-/// ordinary terminal error; `queue.get`'s ordinary queue errors are
-/// caught into `cause` (notably `QueueAlreadyClosed` after a graceful
-/// `close`), while cancellation is NOT catchable and simply unwinds this
-/// callback to the `handle_cancellation` boundary in `fuwaroid_loop`.
-/// On any ordinary exit the unified cleanup runs with the mapped reason
-/// and re-raises the original cause for a `Failed` stop.
+/// The message loop proper. When idle (or after a partially filled batch
+/// drains), one `queue.get` provides the suspension/cancellation boundary.
+/// Once an envelope is available, the loop drains the rest of the current
+/// fairness batch synchronously with `try_get`; a non-empty backlog therefore
+/// pays the async `get` path once per scheduler batch instead of once per
+/// message.
+///
+/// The batch size and observable scheduling contract are unchanged: after
+/// exactly `fuwaroid_yield_batch` complete messages since the previous yield,
+/// the loop pauses before taking another message. If the mailbox becomes empty
+/// earlier, the next `queue.get` parks immediately. Ordinary queue errors
+/// leave the serving loop through one outer error boundary; cancellation is
+/// not an `Error` in async 0.22.x and bypasses that boundary unchanged.
+///
+/// On any ordinary exit the unified cleanup runs with the mapped reason and
+/// re-raises the original cause for a `Failed` stop.
 async fn[State, Cmd, Query, Reply] fuwaroid_serve(
   ctx : Ctx[Cmd, Query, Reply],
   init : State,
@@ -468,42 +475,44 @@ async fn[State, Cmd, Query, Reply] fuwaroid_serve(
 ) -> Unit {
   let mut state = init
   let mut served_in_batch = 0
-  let mut cause : Error? = None
-  while cause is None {
-    let next : Result[Envelope[Cmd, Query, Reply], Error] = Ok(queue.get()) catch {
-      // Ordinary queue errors only (closed-and-empty after `close`,
-      // foreign close errors). Cancellation is a separate signal and
-      // bypasses this handler entirely.
-      error => Err(error)
-    }
-    match next {
-      Ok(envelope) => {
-        state = settle_envelope(ctx, state, envelope, on_cmd, on_query)
-        // Counting point: the handler returned, the state is committed
-        // (an ask reply handoff is best-effort and not part of the criterion).
-        stop.diag.processed = stop.diag.processed + 1L
-        served_in_batch += 1
+  let reason : StopReason = try {
+    while true {
+      // The first take may suspend. If a previous partial batch exhausted the
+      // mailbox, this is the point where the loop parks until more work arrives.
+      let envelope = queue.get()
+      state = settle_envelope(ctx, state, envelope, on_cmd, on_query)
+      stop.diag.processed = stop.diag.processed + 1L
+      served_in_batch += 1
+
+      // A ready backlog needs no async suspension check between complete
+      // messages: fairness/cancellation is deliberately observed at the same
+      // batch boundary as before. Stop before probing past that boundary so a
+      // full batch always yields prior to taking message batch+1.
+      while served_in_batch < fuwaroid_yield_batch {
+        match queue.try_get() {
+          Some(next) => {
+            state = settle_envelope(ctx, state, next, on_cmd, on_query)
+            stop.diag.processed = stop.diag.processed + 1L
+            served_in_batch += 1
+          }
+          None => break
+        }
       }
-      Err(error) => cause = Some(error)
+
+      // Yield only after a full batch. A partial batch falls through and the
+      // next outer `queue.get` either takes newly-arrived work or suspends.
+      if served_in_batch >= fuwaroid_yield_batch {
+        served_in_batch = 0
+        @async.pause()
+      }
     }
-    // Yield point BETWEEN complete messages only: the handler above ran
-    // entry-to-return with no suspension inside. `pause` re-queues this
-    // task at the tail of the ready queue and delivers the host's
-    // cancellation signal here if it was requested since the last
-    // boundary, so a cancelled loop cannot drain an unbounded backlog.
-    // `pause` cannot raise an ordinary error; cancellation unwinds to the
-    // `handle_cancellation` boundary on its own.
-    if cause is None && served_in_batch >= fuwaroid_yield_batch {
-      served_in_batch = 0
-      @async.pause()
-    }
-  }
-  let reason : StopReason = match cause {
-    // Graceful: closed-and-empty drain completed (or the loop exited
-    // without a cause — same disposition).
-    None | Some(@aqueue.QueueAlreadyClosed) => Graceful
-    // Ordinary failure: keep the original error identity.
-    Some(original) => Failed(original)
+    // Unreachable in normal control flow; keeps the try expression total.
+    Graceful
+  } catch {
+    // Closed-and-empty is the graceful drain terminator.
+    @aqueue.QueueAlreadyClosed => Graceful
+    // Any other ordinary mailbox failure keeps its original identity.
+    original => Failed(original)
   }
   fuwaroid_cleanup(queue, reason, stop)
 }

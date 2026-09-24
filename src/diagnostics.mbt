@@ -92,15 +92,6 @@ fn Diag::fresh() -> Diag {
   }
 }
 
-
-///|
-#inline
-fn Diag::add_processed(self : Diag, count : Int) -> Unit {
-  if count > 0 {
-    self.processed += count.to_int64()
-  }
-}
-
 ///|
 #inline
 fn Diag::add_abandoned(self : Diag, count : Int) -> Unit {

@@ -56,7 +56,7 @@ the other flow.
    or that a callback is pure; callers must keep actor state owned by the
    loop and avoid mutating it from spawned work or replies.
 2. **Fair scheduling happens between complete messages.** After every
-   `fuwaroid_yield_batch` (32) complete messages the loop yields the
+   `fuwaroid_yield_batch` (64) complete messages the loop yields the
    scheduler, so an instance that keeps its own mailbox non-empty cannot
    monopolize the cooperative runtime: other instances, timers and
    cancellation all get scheduled. This is a scheduling opportunity, not a
@@ -419,7 +419,7 @@ bound; budget your producers (see the queue-growth measurements in
 
 ## Fair scheduling
 
-The loop yields the scheduler after every 32 complete messages (the
+The loop yields the scheduler after every 64 complete messages (the
 default `fuwaroid_yield_batch`, adjudicated from measured data — see
 `docs/concurrency-benchmarks.md`). What the measurements show:
 

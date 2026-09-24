@@ -312,12 +312,12 @@ pub fn[State, Cmd] Fuwaroid::spawn_fold(
 }
 
 ///|
-/// Complete messages processed between two scheduler yields. A batch of 1
-/// maximizes fairness at the cost of a scheduling round trip per message;
-/// larger batches amortize the yield but delay other ready tasks and
-/// cancellation observation. 32 is a starting point — retune it with the
-/// benchmark harness, not by intuition.
-let fuwaroid_yield_batch : Int = 32
+/// Complete messages processed between scheduler yields.
+let fuwaroid_yield_batch : Int = 64
+
+///|
+/// Stranded-message cleanup keeps the original smaller cadence.
+let fuwaroid_cleanup_yield_batch : Int = 32
 
 ///|
 #inline
@@ -499,7 +499,7 @@ async fn[Cmd, Query, Reply] fail_leftover_asks(
       Some(envelope) => {
         abandon_envelope(envelope)
         let abandoned = abandoned + 1
-        if abandoned >= fuwaroid_yield_batch {
+        if abandoned >= fuwaroid_cleanup_yield_batch {
           match diag {
             Some(d) => d.add_abandoned(abandoned)
             None => ()

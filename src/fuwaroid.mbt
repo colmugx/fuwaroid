@@ -383,32 +383,19 @@ async fn[State, Cmd, Query, Reply] fuwaroid_serve(
   let reason : StopReason = try {
     for envelope = queue.get(),
         state = init,
-        served = 0,
-        unpublished = 0 {
+        served = 0 {
       let state = settle_envelope(ctx, state, envelope, on_cmd, on_query)
       let served = served + 1
-      let unpublished = unpublished + 1
+      stop.diag.processed += 1L
 
       if served >= fuwaroid_yield_batch {
-        stop.diag.add_processed(unpublished)
         @async.pause()
-        continue queue.get(), state, 0, 0
+        continue queue.get(), state, 0
       }
 
-      let next = try {
-        queue.try_get()
-      } catch {
-        error => {
-          stop.diag.add_processed(unpublished)
-          raise error
-        }
-      }
-      match next {
-        Some(next) => continue next, state, served, unpublished
-        None => {
-          stop.diag.add_processed(unpublished)
-          continue queue.get(), state, served, 0
-        }
+      match queue.try_get() {
+        Some(next) => continue next, state, served
+        None => continue queue.get(), state, served
       }
     }
     Graceful

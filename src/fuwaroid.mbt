@@ -208,17 +208,6 @@ fn LoopStop::fresh() -> LoopStop {
 }
 
 ///|
-/// No-op query handler for `spawn_fold`.
-#inline
-fn[State, Cmd] fold_receipt_query(
-  _ctx : Ctx[Cmd, Unit, Unit],
-  state : State,
-  _query : Unit,
-) -> (State, Unit) {
-  (state, ())
-}
-
-///|
 /// Shared admission path for `tell` and `ask`.
 #inline
 fn[Cmd, Query, Reply] Fuwaroid::admit(

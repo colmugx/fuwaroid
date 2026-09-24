@@ -63,7 +63,7 @@ async test "W02 cancelled invariant: Cancelled status, reaped registry, TaskCanc
         error => Err(error)
       }
       match waited {
-        Err(@async.TaskCancelled) => 0
+        Err(@async.WaitedTaskAlreadyCancelled) => 0
         Ok(value) =>
           abort("W02: cancelled task must not deliver a value, got \{value}")
         Err(_) => abort("W02: waiter must see exactly TaskCancelled")

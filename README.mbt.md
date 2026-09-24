@@ -109,7 +109,7 @@ is exactly the shape that survives real threads unchanged.
 | `Supervisor(group~)` | Bind a supervisor to an existing host task group of any result type. No runtime is created; the host stays the structured-concurrency owner. Opt-in and fully separate from every Fuwaroid path. |
 | `sup.spawn(f, label?)` | Spawn an owned task on the host group; `Result[SupervisedTask[X], SpawnRefusal]` — refusal is explicit once shutdown began, never a silent drop. |
 | `handle.cancel()` | Cooperative cancellation REQUEST (`Running -> Cancelling`, idempotent, forward-only). Returning does not mean the task stopped. |
-| `handle.wait()` | Result delivery delegated to `Task::wait`: the value, the ORIGINAL error, or `@async.TaskCancelled` for a cancelled target. Multi-waiter and late-wait safe. |
+| `handle.wait()` | Result delivery delegated to `Task::wait`: the value, the ORIGINAL error, or `@async.WaitedTaskAlreadyCancelled` for a cancelled target. Multi-waiter and late-wait safe. |
 | `handle.snapshot()` | Synchronous `{ id, label, status, error_text }` view. |
 | `sup.cancel_and_wait(tasks~, timeout_ms~)` | Cancel the SELECTED tasks and wait for exactly them under ONE overall deadline: `Settled`, or `DeadlineExceeded(snapshots)` with the unresolved tasks in their true status. Unselected tasks and admission are untouched. |
 | `sup.shutdown(timeout_ms~)` | Close admission forever, then cancel and bounded-settle everything live. Idempotent; a deadline exceeded can be retried and finally reports `Settled`. |
@@ -231,7 +231,7 @@ async test "close then join" {
   `moonbitlang/async` 0.22.x cancellation is a runtime signal of its
   own, distinct from `Error` — Fuwaroid never wraps it into a fake
   error. The cancelled loop task ends cancelled (an external
-  `Task::wait` observer sees `@async.TaskCancelled`), and `join`
+  `Task::wait` observer sees `@async.WaitedTaskAlreadyCancelled`), and `join`
   reports the recorded `Cancelled`. Multiple waiters are fine, and a
   `join` after termination returns immediately. If the waiter itself is
   cancelled, that cancellation propagates unchanged, including when the
@@ -303,7 +303,7 @@ Semantics that matter:
   The race outcome is honest: a worker that finishes before observing
   the request ends `Completed` (or `Failed`), not `Cancelled`.
 - **`wait` is `Task::wait`.** Results, original error identity and
-  `@async.TaskCancelled` for a cancelled target come straight from the
+  `@async.WaitedTaskAlreadyCancelled` for a cancelled target come straight from the
   underlying task; handles stay waitable after the supervisor's live
   registry has reaped their task, with any number of waiters.
 - **One deadline for the whole settlement operation.** `cancel_and_wait`
@@ -476,7 +476,7 @@ cancellation signal — propagated like an error but NOT capturable by
 
 | 0.1.x | 0.2.0 |
 |---|---|
-| `StopReason::Stopped(error)` — one abnormal constructor; host cancellation surfaced as a stored cancellation `Error` | `StopReason::Cancelled` for a host-cancelled loop (the cancelled loop task ends cancelled; `Task::wait` observers see `@async.TaskCancelled`), and `StopReason::Failed(original error)` for ordinary terminal errors |
+| `StopReason::Stopped(error)` — one abnormal constructor; host cancellation surfaced as a stored cancellation `Error` | `StopReason::Cancelled` for a host-cancelled loop (the cancelled loop task ends cancelled; `Task::wait` observers see `@async.WaitedTaskAlreadyCancelled`), and `StopReason::Failed(original error)` for ordinary terminal errors |
 | `join` on a cancelled loop returned `Stopped(cancel error)` | `join` returns `Cancelled`; `TaskCancelled` itself is never stored or returned as the reason |
 
 ## Purity

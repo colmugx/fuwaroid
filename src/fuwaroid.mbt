@@ -29,7 +29,7 @@
 ///   termination reason is recorded, and only then does the loop task
 ///   terminate (returning normally after a graceful drain, re-raising the
 ///   original error for an ordinary failure, and terminating CANCELLED —
-///   observable as `@async.TaskCancelled` to `Task::wait` — after a host
+///   observable as `@async.WaitedTaskAlreadyCancelled` to `Task::wait` — after a host
 ///   cancellation, whose signal in async 0.22.x is distinct from `Error`).
 /// - `join` waits for the loop task itself to terminate and returns the
 ///   recorded stop reason; it never waits for or cancels background work
@@ -676,7 +676,7 @@ pub fn[Cmd, Query, Reply] Fuwaroid::close(
 ///   targets that performs no cancellation check, so the pre-check raises
 ///   the pending signal first via `@async.pause()`.
 /// - Cancelled loop task (B): `Task::wait` reports a cancelled TARGET as
-///   the ordinary `@async.TaskCancelled` error. That value describes the
+///   the ordinary `@async.WaitedTaskAlreadyCancelled` error. That value describes the
 ///   waited task, not this actor's stop, so it is never stored or
 ///   returned as the reason: the loop's own cancellation branch already
 ///   recorded `Cancelled` during its protected cleanup, and `join`
@@ -729,7 +729,7 @@ pub async fn[Cmd, Query, Reply] Fuwaroid::join(
         // the unified cleanup before re-propagating, so `Cancelled` is
         // the recorded outcome. `TaskCancelled` itself is never used as
         // the reason — it describes the waited task, not this actor.
-        @async.TaskCancelled => Cancelled
+        @async.WaitedTaskAlreadyCancelled => Cancelled
         other =>
           match cell.reason {
             Some(Failed(_) as reason) => reason

@@ -163,10 +163,10 @@ async test "cancelled actor closes its handle" {
     }
     // This test task is NOT cancelled, so a failed wait can only report
     // the TARGET loop task's cancellation — the ordinary
-    // `@async.TaskCancelled` error. (The loop's own cancellation signal
+    // `@async.WaitedTaskAlreadyCancelled` error. (The loop's own cancellation signal
     // is not an `Error` and never appears here.)
     match loop_outcome {
-      Err(@async.TaskCancelled) => ()
+      Err(@async.WaitedTaskAlreadyCancelled) => ()
       Err(other) => fail("expected TaskCancelled, got \{other}")
       Ok(_) => fail("expected the actor loop to end cancelled")
     }
@@ -210,9 +210,9 @@ async test "queued ask and loop cancellation close the public handle" {
       error => Err(error)
     }
     // Uncancelled observer: the cancelled loop task is reported as the
-    // ordinary `@async.TaskCancelled` error.
+    // ordinary `@async.WaitedTaskAlreadyCancelled` error.
     match loop_outcome {
-      Err(@async.TaskCancelled) => ()
+      Err(@async.WaitedTaskAlreadyCancelled) => ()
       Err(other) => fail("expected TaskCancelled, got \{other}")
       Ok(_) => fail("expected the actor loop to end cancelled")
     }
@@ -421,7 +421,7 @@ test "classify_ask_error table" {
 ///     from `Error`, so no error value is fabricated for it — the stranded
 ///     ask's reply queue is closed with the stop marker (`StoppedError`) by
 ///     `fail_leftover_asks`, the loop task terminates CANCELLED (the
-///     uncancelled observer sees `@async.TaskCancelled` from `wait`), and
+///     uncancelled observer sees `@async.WaitedTaskAlreadyCancelled` from `wait`), and
 ///     `join` reports the same recorded `Cancelled`.
 ///
 /// NOTE on secondary cleanup evidence (`LoopStop.cleanup_error`): injecting
@@ -536,9 +536,9 @@ async test "T15 stop reason keeps its original identity through cleanup and join
       error => Err(error)
     }
     // The uncancelled test task observes the cancelled loop task as the
-    // ordinary `@async.TaskCancelled` error — never as a normal Done.
+    // ordinary `@async.WaitedTaskAlreadyCancelled` error — never as a normal Done.
     match outcome {
-      Err(@async.TaskCancelled) => ()
+      Err(@async.WaitedTaskAlreadyCancelled) => ()
       Err(other) => fail("T15b: expected TaskCancelled, got \{other}")
       Ok(_) => fail("T15b: the cancelled loop ended as a normal completion")
     }
@@ -607,7 +607,7 @@ test "mailbox_capacity_error accepts only positive Bounded capacities" {
 /// cancellation signal, which `catch` cannot capture and `join` cannot
 /// convert into a `StopReason`. The waiter task therefore ends cancelled,
 /// and the uncancelled test task (the observer) verifies that by waiting
-/// on the waiter and seeing `@async.TaskCancelled`. The actor's outcome
+/// on the waiter and seeing `@async.WaitedTaskAlreadyCancelled`. The actor's outcome
 /// is unaffected: it stays `Graceful`.
 async test "cancelled joiner propagates cancellation after loop completion" {
   @async.with_task_group(group => {
@@ -632,11 +632,11 @@ async test "cancelled joiner propagates cancellation after loop completion" {
     waiter.cancel()
     // This test task is NOT cancelled: waiting on the cancelled waiter
     // reports the TARGET's cancellation as the ordinary
-    // `@async.TaskCancelled` error.
+    // `@async.WaitedTaskAlreadyCancelled` error.
     let waiter_outcome : Result[Unit, Error] = Ok(waiter.wait()) catch {
       error => Err(error)
     }
-    guard waiter_outcome is Err(@async.TaskCancelled) else {
+    guard waiter_outcome is Err(@async.WaitedTaskAlreadyCancelled) else {
       fail(
         "the cancelled join waiter did not end cancelled: \{Repr(waiter_outcome)}",
       )

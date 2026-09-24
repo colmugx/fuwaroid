@@ -139,7 +139,7 @@ pub fn[X] SupervisedTask::cancel(self : SupervisedTask[X]) -> Unit {
 ///|
 /// Wait using the underlying Task semantics.
 ///
-/// A cancelled target raises @async.TaskCancelled. Ordinary worker failures
+/// A cancelled target raises @async.WaitedTaskAlreadyCancelled. Ordinary worker failures
 /// keep their original Error identity. Caller cancellation propagates.
 pub async fn[X] SupervisedTask::wait(self : SupervisedTask[X]) -> X {
   match self.task {

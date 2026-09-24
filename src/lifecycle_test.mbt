@@ -955,7 +955,7 @@ priv enum T10Query {
 /// so it propagates through `ask` untouched (`catch` cannot capture it,
 /// and `ask` never converts it into an `AskFailure`). The asker task
 /// therefore ends cancelled, which the uncancelled test task observes as
-/// `@async.TaskCancelled` from `wait`. The actor is unaffected and keeps
+/// `@async.WaitedTaskAlreadyCancelled` from `wait`. The actor is unaffected and keeps
 /// serving: the backlog completes exactly once and a fresh command+query
 /// afterwards gets the correct reply, so the interrupted ask left no
 /// state damage behind.
@@ -1009,11 +1009,11 @@ async test "T10 asker cancellation propagates to the call site and the actor kee
     // The test task (uncancelled) waits for the asker — waiting suspends
     // this task, so the cancellation is actually delivered at the ask's
     // suspension point. A cancelled TARGET is reported to the observer as
-    // the ordinary `@async.TaskCancelled` error.
+    // the ordinary `@async.WaitedTaskAlreadyCancelled` error.
     let asker_outcome : Result[Unit, Error] = Ok(asker.wait()) catch {
       error => Err(error)
     }
-    guard asker_outcome is Err(@async.TaskCancelled) else {
+    guard asker_outcome is Err(@async.WaitedTaskAlreadyCancelled) else {
       fail(
         "T10: the cancelled asker did not end cancelled: \{Repr(asker_outcome)}",
       )

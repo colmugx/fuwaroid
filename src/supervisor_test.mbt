@@ -33,7 +33,7 @@ fn[T] s_gated(gate : @aqueue.Queue[Unit], value : T) -> async () -> T {
 fn[T] s_describe(result : Result[T, Error]) -> String {
   match result {
     Ok(_) => "ok"
-    Err(@async.TaskCancelled) => "task-cancelled"
+    Err(@async.WaitedTaskAlreadyCancelled) => "task-cancelled"
     Err(_) => "other-error"
   }
 }

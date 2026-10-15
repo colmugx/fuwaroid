@@ -14,8 +14,8 @@ Install the [MoonBit toolchain](https://www.moonbitlang.com/download), then
 add Fuwaroid and its async runtime dependency to your MoonBit project:
 
 ```sh
-moon add colmugx/fuwaroid@0.3.1
-moon add moonbitlang/async@0.22.3
+moon add colmugx/fuwaroid@0.3.2
+moon add moonbitlang/async@0.22.5
 ```
 
 Import the packages in the consuming package's `moon.pkg`:
@@ -156,6 +156,9 @@ is exactly the shape that survives real threads unchanged.
 | `sup.shutdown(timeout_ms~)` | Close admission forever, then cancel and bounded-settle everything live. Idempotent; a deadline exceeded can be retried and finally reports `Settled`. |
 | `sup.snapshot()` | Synchronous `{ lifecycle, tasks }` view (`Open / Closing / Closed`). |
 | `SupervisedTaskStatus`, `SettleOutcome`, `SupervisorLifecycle`, `SupervisedTaskSnapshot`, `SupervisorSnapshot`, `SpawnRefusal` | Supervisor vocabulary, all owned by this library. |
+| `OneShot()` | Create an empty single-assignment cell (`OneShot[X]`) on the host's cooperative runtime: no mailbox, no actor, no handler. |
+| `cell.complete(value)` | Synchronous, first-wins: `Ok(())` once, then `Err(the rejected input)` for every later submission. Publishes and broadcasts without suspending. |
+| `cell.wait()` | Async: suspends until completed, then every (repeated, late, concurrent) waiter observes the same saved value. Caller cancellation removes only this waiter. |
 
 ## Usage
 
@@ -391,6 +394,57 @@ restart, no linking, no remote addressing — and no application metadata
 (session ids, receipts, business tags) inside the supervisor. A task is
 `id` (unique and monotonic within the supervisor's lifetime), an
 optional `label`, and a lifecycle status; that is the whole identity.
+
+## OneShot: a single-assignment cell
+
+OneShot is the primitive for handing ONE value to one or more waiting
+tasks without standing up an actor: private state plus a
+`moonbitlang/async` CondVar — no mailbox, no loop, no handler. It lives
+on the same cooperative async runtime as everything else in this
+library, so it is not thread-safe and not an FFI callback target;
+external events must enter the runtime first.
+
+```mbt nocheck
+async test "oneshot hands one value to waiters" {
+  @async.with_task_group(group => {
+    let cell : @fuwaroid.OneShot[Int] = @fuwaroid.OneShot()
+    let _ = group.spawn(() => {
+      // ... async work, then publish the outcome:
+      let _ = cell.complete(42)
+    })
+    let value = cell.wait() // suspends until the value is published
+    debug_inspect(value, content="42")
+  })
+}
+```
+
+- **First-wins completion.** The first `complete(value)` stores the value
+  and wakes every current waiter, returning `Ok(())`. Every later
+  `complete` is synchronous, changes nothing, and returns
+  `Err(the value THIS call submitted)` — the rejection reports the
+  rejected input, not the saved value. `complete` is a plain function:
+  it cannot suspend.
+- **Waiting never consumes.** `wait` returns the saved value immediately
+  once completed; repeated waits, late waiters, and any number of
+  concurrent waiters all observe the same value. There is no timeout, no
+  error state, no reset, no close: make `X` a `Result` or your own
+  outcome type to carry failure, and bound the wait with
+  `@async.with_timeout` on the caller side — a timed-out caller leaves
+  the cell fully usable for everyone else.
+- **Cancellation removes only the cancelled waiter.** The cell keeps its
+  state; other waiters — current or future — are unaffected. The subtle
+  boundary: a waiter that is woken by the completion broadcast but
+  cancelled BEFORE it resumes still observes the value (the CondVar's
+  woken-then-cancelled protection keeps an already-delivered value from
+  being lost); a waiter cancelled while still parked is dequeued and
+  consumes nothing. A cancelled waiter observes its own cancellation
+  signal; an uncancelled observer of that task sees
+  `@async.WaitedTaskAlreadyCancelled` from `Task::wait`, as with any
+  cancelled task.
+- **Concurrent producers are first-wins by value, not by order.** When
+  several tasks race to complete, exactly one `Ok` is returned and the
+  saved value is that winner's; no scheduling order is promised, and the
+  guarantee is within one async runtime, not across threads.
 
 ## Mailbox configuration
 

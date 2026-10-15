@@ -11,6 +11,6 @@ description = "Offline runnable counter example for Fuwaroid"
 preferred_target = "native"
 
 import {
-  "colmugx/fuwaroid@0.3.1",
+  "colmugx/fuwaroid@0.3.2",
   "moonbitlang/async@0.22.3",
 }

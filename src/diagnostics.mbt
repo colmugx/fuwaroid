@@ -94,7 +94,7 @@ fn Diag::fresh() -> Diag {
 
 ///|
 #inline
-fn Diag::add_abandoned(self : Diag, count : Int) -> Unit {
+fn Diag::add_abandoned(self : Diag, count : Int32) -> Unit {
   if count > 0 {
     self.abandoned += count.to_int64()
   }
@@ -102,7 +102,7 @@ fn Diag::add_abandoned(self : Diag, count : Int) -> Unit {
 
 ///|
 /// Rank used by the forward-only phase move (see `Diag::transition`).
-fn lifecycle_rank(lifecycle : Lifecycle) -> Int {
+fn lifecycle_rank(lifecycle : Lifecycle) -> Int32 {
   match lifecycle {
     Running => 0
     Closing => 1

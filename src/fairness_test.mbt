@@ -24,21 +24,21 @@
 /// Chain length for T01. Large enough that a yielding implementation is
 /// forced to yield many times, and a no-yield one demonstrably monopolizes
 /// a scheduling quantum.
-let t01_chain_len : Int = 2000
+let t01_chain_len : Int32 = 2000
 
 ///|
 /// Per-instance chain length (three instances).
-let t02_chain_len : Int = 1000
+let t02_chain_len : Int32 = 1000
 
 ///|
 /// Chain length for T03's busy mailbox.
-let t03_chain_len : Int = 2000
+let t03_chain_len : Int32 = 2000
 
 ///|
 /// Spin budget for completion flags: one spin-yield advances every ready
 /// loop by one batch, so `chain_len` iterations always suffice; the margin
 /// covers the auxiliary ask tasks.
-let spin_budget : Int = 10000
+let spin_budget : Int32 = 10000
 
 ///|
 priv enum T01HotCmd {
@@ -86,7 +86,7 @@ async test "T01 cold instance progresses while hot instance self-chains" {
     )
     // The cold instance has no command flow in this test; only its query
     // path is exercised.
-    let cold : @fuwaroid.Fuwaroid[Unit, T01ColdQuery, Int] = @fuwaroid.Fuwaroid::spawn(
+    let cold : @fuwaroid.Fuwaroid[Unit, T01ColdQuery, Int32] = @fuwaroid.Fuwaroid::spawn(
       group~,
       init=0,
       on_cmd=(_, state, _cmd) => state,
@@ -160,8 +160,8 @@ priv enum T02Query {
 
 ///|
 priv struct T02State {
-  mut count : Int
-  mut sum : Int
+  mut count : Int32
+  mut sum : Int32
 }
 
 ///|
@@ -173,7 +173,7 @@ fn t02_hot_instance(
   tag : String,
   log : Array[String],
   done : Ref[Bool],
-) -> @fuwaroid.Fuwaroid[T02Cmd, T02Query, (Int, Int)] {
+) -> @fuwaroid.Fuwaroid[T02Cmd, T02Query, (Int32, Int32)] {
   @fuwaroid.Fuwaroid::spawn(
     group~,
     init={ count: 0, sum: 0, },
@@ -281,7 +281,7 @@ async test "T02 hot instances progress together with per-instance FIFO" {
         _ => ()
       }
     }
-    let finishes : Array[(String, Int)] = [
+    let finishes : Array[(String, Int32)] = [
       ("A", last_a),
       ("B", last_b),
       ("C", last_c),
@@ -329,7 +329,7 @@ priv enum T03Cmd {
 /// is distinct from any `Error` in async 0.22.x) and terminated
 /// cancelled.
 async test "T03 cancelling a busy host stops the loop and closes admission" {
-  let processed : Ref[Int] = Ref(0)
+  let processed : Ref[Int32] = Ref(0)
   let handle_cell : Ref[@fuwaroid.Fuwaroid[T03Cmd, Unit, Unit]?] = Ref(None)
   let group_cell : Ref[@async.TaskGroup[Unit]?] = Ref(None)
   @async.with_task_group(outer => {

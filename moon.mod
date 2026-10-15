@@ -1,6 +1,6 @@
 name = "colmugx/fuwaroid"
 
-version = "0.3.1"
+version = "0.3.2"
 
 readme = "README.mbt.md"
 
@@ -13,7 +13,7 @@ keywords = [ "fuwaroid", "actor", "concurrency", "async", "moonbitlang" ]
 description = "Lightweight single-writer concurrency"
 
 import {
-  "moonbitlang/async@0.22.3",
+  "moonbitlang/async@0.22.5",
 }
 
 source = "src"

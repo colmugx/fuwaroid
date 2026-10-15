@@ -25,12 +25,12 @@
 ///|
 /// Spin budget for coordination counters: one pause advances every ready
 /// loop by one batch.
-let t14_spin_budget : Int = 10000
+let t14_spin_budget : Int32 = 10000
 
 ///|
 /// Monotonicity ordering for the lifecycle assertions (Running=0,
 /// Closing=1, Stopped=2).
-fn t14_lifecycle_rank(lifecycle : @fuwaroid.Lifecycle) -> Int {
+fn t14_lifecycle_rank(lifecycle : @fuwaroid.Lifecycle) -> Int32 {
   match lifecycle {
     @fuwaroid.Running => 0
     @fuwaroid.Closing => 1
@@ -210,7 +210,7 @@ async test "T14-B snapshot attributes refusals correctly and keeps conservation"
     // counted in rejected_full, so every attempt is recorded and the
     // final count is asserted exactly: window refusal + recorded retries.
     let mut barrier_refusals = 0
-    let mut after_full : Result[Int, @fuwaroid.AskFailure] = Err(
+    let mut after_full : Result[Int32, @fuwaroid.AskFailure] = Err(
       @fuwaroid.AskFailure::TimedOut,
     )
     for _ in 0..<t14_spin_budget {

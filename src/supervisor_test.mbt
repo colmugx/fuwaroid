@@ -72,8 +72,8 @@ priv suberror S02Boom {
 ///|
 /// Ordinary failure keeps original error propagation and host-group fail-fast.
 async test "S02 failure propagates original error and host group semantics" {
-  let sup_cell : Ref[@fuwaroid.Supervisor[Int]?] = Ref(None)
-  let handle_cell : Ref[@fuwaroid.SupervisedTask[Int]?] = Ref(None)
+  let sup_cell : Ref[@fuwaroid.Supervisor[Int32]?] = Ref(None)
+  let handle_cell : Ref[@fuwaroid.SupervisedTask[Int32]?] = Ref(None)
   let inner : Result[Unit, Error] = Ok(
     @async.with_task_group((group : @async.TaskGroup[Unit]) => {
       let sup = @fuwaroid.Supervisor(group~)
@@ -118,7 +118,7 @@ async test "S03 cancel requests, worker terminates cancelled, waiter sees TaskCa
       handle.snapshot().status,
       @fuwaroid.SupervisedTaskStatus::Cancelling,
     )
-    let waited : Result[Int, Error] = Ok(handle.wait()) catch {
+    let waited : Result[Int32, Error] = Ok(handle.wait()) catch {
       error => Err(error)
     }
     assert_eq(s_describe(waited), "task-cancelled")
@@ -139,7 +139,7 @@ async test "S04 immediate cancellation race ends cancelled without registry leak
     let park : @aqueue.Queue[Unit] = @aqueue.Queue(kind=@aqueue.Unbounded)
     let handle = s_spawn_ok(sup, s_parked(park, 7), label="early")
     handle.cancel()
-    let waited : Result[Int, Error] = Ok(handle.wait()) catch {
+    let waited : Result[Int32, Error] = Ok(handle.wait()) catch {
       error => Err(error)
     }
     assert_eq(s_describe(waited), "task-cancelled")
@@ -206,7 +206,7 @@ async test "S06 selected cancellation leaves unselected tasks running" {
 async test "S07 bounded settlement succeeds before the deadline" {
   @async.with_task_group((group : @async.TaskGroup[Unit]) => {
     let sup = @fuwaroid.Supervisor(group~)
-    let handles : Array[@fuwaroid.SupervisedTask[Int]] = []
+    let handles : Array[@fuwaroid.SupervisedTask[Int32]] = []
     for i in 0..<3 {
       let park : @aqueue.Queue[Unit] = @aqueue.Queue(kind=@aqueue.Unbounded)
       handles.push(s_spawn_ok(sup, s_parked(park, i), label="w\{i}"))
@@ -257,7 +257,7 @@ async test "S08 deadline exceeds a protected task, reports truth, converges afte
 
     assert_eq(sup.snapshot().tasks.length(), 1)
     let _ = gate.try_put(())
-    let waited : Result[Int, Error] = Ok(handle.wait()) catch {
+    let waited : Result[Int32, Error] = Ok(handle.wait()) catch {
       error => Err(error)
     }
     assert_eq(s_describe(waited), "task-cancelled")
@@ -276,7 +276,7 @@ async test "S09 deadline is global, not multiplied by the task count" {
   @async.with_task_group((group : @async.TaskGroup[Unit]) => {
     let sup = @fuwaroid.Supervisor(group~)
     let gates : Array[@aqueue.Queue[Unit]] = []
-    let handles : Array[@fuwaroid.SupervisedTask[Int]] = []
+    let handles : Array[@fuwaroid.SupervisedTask[Int32]] = []
     for i in 0..<8 {
       let gate : @aqueue.Queue[Unit] = @aqueue.Queue(kind=@aqueue.Unbounded)
       gates.push(gate)
@@ -325,7 +325,7 @@ async test "S10 caller cancellation does not cancel targets beyond the request" 
     })
     @async.pause()
     caller.cancel()
-    let caller_outcome : Result[Int, Error] = Ok(caller.wait()) catch {
+    let caller_outcome : Result[Int32, Error] = Ok(caller.wait()) catch {
       error => Err(error)
     }
     assert_eq(s_describe(caller_outcome), "task-cancelled")
@@ -335,7 +335,7 @@ async test "S10 caller cancellation does not cancel targets beyond the request" 
     )
     assert_eq(sup.snapshot().tasks.length(), 1)
     let _ = gate.try_put(())
-    let target_outcome : Result[Int, Error] = Ok(target.wait()) catch {
+    let target_outcome : Result[Int32, Error] = Ok(target.wait()) catch {
       error => Err(error)
     }
     assert_eq(s_describe(target_outcome), "task-cancelled")
@@ -404,7 +404,7 @@ async test "S12 shutdown idempotence and deadline retry convergence" {
     }
 
     let _ = gate.try_put(())
-    let waited : Result[Int, Error] = Ok(stuck.wait()) catch {
+    let waited : Result[Int32, Error] = Ok(stuck.wait()) catch {
       error => Err(error)
     }
     assert_eq(s_describe(waited), "task-cancelled")
@@ -446,7 +446,7 @@ async test "S13 late and multi waiters agree after the task is reaped" {
 /// Supervisor accepts a host TaskGroup with a non-Unit result type.
 async test "S14 supervisor binds to a non-Unit host task group" {
   let result = @async.with_task_group((group : @async.TaskGroup[String]) => {
-    let sup : @fuwaroid.Supervisor[Int] = @fuwaroid.Supervisor(group~)
+    let sup : @fuwaroid.Supervisor[Int32] = @fuwaroid.Supervisor(group~)
     let handle = s_spawn_ok(sup, () => 17, label="non-unit-host")
     assert_eq(handle.wait(), 17)
     "host-result"
@@ -506,7 +506,7 @@ async test "S15 shielded cancelled caller still observes settlement deadline" {
     assert_eq(sup.snapshot().tasks.length(), 1)
 
     let _ = gate.try_put(())
-    let target_outcome : Result[Int, Error] = Ok(target.wait()) catch {
+    let target_outcome : Result[Int32, Error] = Ok(target.wait()) catch {
       error => Err(error)
     }
     assert_eq(s_describe(target_outcome), "task-cancelled")

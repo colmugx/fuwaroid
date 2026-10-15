@@ -10,14 +10,14 @@ pub struct Supervisor[X] {
 
 ///|
 priv struct SupervisorState[X] {
-  mut next_id : Int
+  mut next_id : Int32
   mut lifecycle : SupervisorLifecycle
   live : Array[SupervisedTask[X]]
 }
 
 ///|
 pub struct SupervisedTask[X] {
-  priv id : Int
+  priv id : Int32
   priv label : String
   priv mut status : SupervisedTaskStatus
   priv mut error_text : String?
@@ -95,7 +95,7 @@ async fn[X] supervised_run(
 pub fn[X] Supervisor::spawn(
   self : Supervisor[X],
   f : async () -> X,
-  label? : String = "",
+  label~ : String = "",
 ) -> Result[SupervisedTask[X], SpawnRefusal] {
   if !(self.state.lifecycle is Open) {
     return Err(SupervisorClosed)

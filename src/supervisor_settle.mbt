@@ -35,7 +35,7 @@ fn[X] supervisor_snapshots(
 pub async fn[X] Supervisor::cancel_and_wait(
   _self : Supervisor[X],
   tasks~ : ArrayView[SupervisedTask[X]],
-  timeout_ms~ : Int,
+  timeout_ms~ : Int32,
 ) -> SettleOutcome {
   for task in tasks {
     task.cancel()
@@ -108,7 +108,7 @@ pub async fn[X] Supervisor::cancel_and_wait(
 /// TaskGroup. Repeated shutdown calls may wait for them again.
 pub async fn[X] Supervisor::shutdown(
   self : Supervisor[X],
-  timeout_ms~ : Int,
+  timeout_ms~ : Int32,
 ) -> SettleOutcome {
   if self.state.lifecycle is Open {
     self.state.lifecycle = Closing

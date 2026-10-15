@@ -26,20 +26,20 @@
 ///|
 /// Backlog size for T07: large enough that the drain spans many scheduler
 /// yields.
-let t07_backlog : Int = 2000
+let t07_backlog : Int32 = 2000
 
 ///|
 /// Backlog size for T08 (both sequences).
-let t08_backlog : Int = 2000
+let t08_backlog : Int32 = 2000
 
 ///|
 /// Number of concurrent external joiners in T07.
-let t07_joiners : Int = 3
+let t07_joiners : Int32 = 3
 
 ///|
 /// Spin budget for coordination counters: one spin-yield advances every
 /// ready loop by one batch, so the backlog always fits.
-let lc_spin_budget : Int = 10000
+let lc_spin_budget : Int32 = 10000
 
 ///|
 priv enum T07Cmd {
@@ -67,8 +67,8 @@ priv enum T07Cmd {
 ///    new tells, and new asks fail fast with a delivery rejection instead
 ///    of hanging until their timeout.
 async test "T07 close is idempotent and every join waiter agrees on Graceful" {
-  let processed : Ref[Int] = Ref(0)
-  let joining : Ref[Int] = Ref(0)
+  let processed : Ref[Int32] = Ref(0)
+  let joining : Ref[Int32] = Ref(0)
   let handle_cell : Ref[@fuwaroid.Fuwaroid[T07Cmd, Unit, Unit]?] = Ref(None)
   let owner_outcome : Ref[Result[@fuwaroid.StopReason, Error]?] = Ref(None)
   let join_results : Array[Result[@fuwaroid.StopReason, Error]] = []
@@ -193,7 +193,7 @@ async test "T07 close is idempotent and every join waiter agrees on Graceful" {
 
 ///|
 priv enum T08Cmd {
-  T08Step(Int)
+  T08Step(Int32)
 }
 
 ///|
@@ -217,7 +217,7 @@ async test "T08 scope-end cancellation vs explicit join after close" {
   // 3. the backlog was NOT drained: the processed count stays below the
   //    backlog size (cancellation won at an observable boundary).
   @async.with_task_group(outer => {
-    let processed : Ref[Int] = Ref(0)
+    let processed : Ref[Int32] = Ref(0)
     let handle_cell : Ref[@fuwaroid.Fuwaroid[T08Cmd, Unit, Unit]?] = Ref(None)
     let host_task = outer.spawn(() => {
       @async.with_task_group(host => {
@@ -288,10 +288,10 @@ async test "T08 scope-end cancellation vs explicit join after close" {
   //    permutation),
   // 3. a late joiner in the observer scope also gets `Graceful`.
   @async.with_task_group(outer => {
-    let processed : Ref[Int] = Ref(0)
+    let processed : Ref[Int32] = Ref(0)
     let handle_cell : Ref[@fuwaroid.Fuwaroid[T08Cmd, Unit, Unit]?] = Ref(None)
     let owner_outcome : Ref[Result[@fuwaroid.StopReason, Error]?] = Ref(None)
-    let served : Array[Int] = []
+    let served : Array[Int32] = []
     let host_task = outer.spawn(() => {
       @async.with_task_group(host => {
         let handle = @fuwaroid.Fuwaroid::spawn_fold(group=host, init=(), on_cmd=(
@@ -382,27 +382,27 @@ async test "T08 scope-end cancellation vs explicit join after close" {
 
 ///|
 /// T04: producers x unique-ID stride per producer (4 x 250 = 1000 messages).
-let t04_producers : Int = 4
+let t04_producers : Int32 = 4
 
 ///|
-let t04_stride : Int = 250
+let t04_stride : Int32 = 250
 
 ///|
 /// T06: commands queued before the closing query.
-let t06_backlog : Int = 2000
+let t06_backlog : Int32 = 2000
 
 ///|
 /// T09: commands queued before the external asker's query. Far larger than
 /// the batch size, so the query sits at a mailbox position the loop cannot
 /// reach before its first batch-yield boundary — the deterministic edge
 /// where the host cancellation lands.
-let t09_backlog : Int = 2000
+let t09_backlog : Int32 = 2000
 
 ///|
 /// T10: commands queued ahead of the ask that will be cancelled. Gives the
 /// canceller several batch boundaries of headroom, so the ask is provably
 /// still parked when the asker task is cancelled.
-let t10_backlog : Int = 200
+let t10_backlog : Int32 = 200
 
 ///|
 /// T11: backlog size, per-command handler work and the ask timeout. The
@@ -410,17 +410,17 @@ let t10_backlog : Int = 200
 /// time on any plausible machine, so the timeout deterministically fires
 /// while the query is still queued and its later execution is observed
 /// after the drain.
-let t11_backlog : Int = 1000
+let t11_backlog : Int32 = 1000
 
 ///|
-let t11_burn_iters : Int = 200000
+let t11_burn_iters : Int32 = 200000
 
 ///|
-let t11_timeout_ms : Int = 10
+let t11_timeout_ms : Int32 = 10
 
 ///|
 priv enum T04Cmd {
-  T04Msg(Int, Int)
+  T04Msg(Int32, Int32)
 }
 
 ///|
@@ -440,11 +440,11 @@ priv enum T04Cmd {
 ///    subsequence is exactly its own ID range in sending order — strictly
 ///    increasing, complete, no duplicates, no losses.
 async test "T04 multi-producer unique IDs: accepted set equals drained processed set" {
-  let served : Array[(Int, Int)] = []
+  let served : Array[(Int32, Int32)] = []
   let refusals : Array[String] = []
-  let ready_count : Ref[Int] = Ref(0)
+  let ready_count : Ref[Int32] = Ref(0)
   let go_flag : Ref[Bool] = Ref(false)
-  let done_count : Ref[Int] = Ref(0)
+  let done_count : Ref[Int32] = Ref(0)
   let drain_done : Ref[Bool] = Ref(false)
   let handle_cell : Ref[@fuwaroid.Fuwaroid[T04Cmd, Unit, Unit]?] = Ref(None)
   let owner_outcome : Ref[Result[@fuwaroid.StopReason, Error]?] = Ref(None)
@@ -620,7 +620,7 @@ async test "T04 multi-producer unique IDs: accepted set equals drained processed
 
 ///|
 priv enum T06Cmd {
-  T06Add(Int)
+  T06Add(Int32)
 }
 
 ///|
@@ -647,14 +647,16 @@ priv enum T06Query {
 /// 4. `join` returns `Graceful` (the closed-and-empty drain completed),
 /// 5. the drained handle still refuses new tells and asks fail-fast.
 async test "T06 close with queued commands and a query drains FIFO and answers Graceful" {
-  let processed : Ref[Int] = Ref(0)
-  let handle_cell : Ref[@fuwaroid.Fuwaroid[T06Cmd, T06Query, Int]?] = Ref(None)
-  let backlog_enqueued : Ref[Bool] = Ref(false)
-  let ask_initiated : Ref[Bool] = Ref(false)
-  let ask_outcome : Ref[Result[Result[Int, @fuwaroid.AskFailure], Error]?] = Ref(
+  let processed : Ref[Int32] = Ref(0)
+  let handle_cell : Ref[@fuwaroid.Fuwaroid[T06Cmd, T06Query, Int32]?] = Ref(
     None,
   )
-  let close_time_processed : Ref[Int] = Ref(-1)
+  let backlog_enqueued : Ref[Bool] = Ref(false)
+  let ask_initiated : Ref[Bool] = Ref(false)
+  let ask_outcome : Ref[Result[Result[Int32, @fuwaroid.AskFailure], Error]?] = Ref(
+    None,
+  )
+  let close_time_processed : Ref[Int32] = Ref(-1)
   let post_close_refusal : Ref[@fuwaroid.SendRefusal?] = Ref(None)
   let owner_outcome : Ref[Result[@fuwaroid.StopReason, Error]?] = Ref(None)
   @async.with_task_group(outer => {
@@ -732,7 +734,7 @@ async test "T06 close with queued commands and a query drains FIFO and answers G
         fail("T06: handle not visible to the asker")
       }
       ask_initiated.val = true
-      let outcome : Result[Result[Int, @fuwaroid.AskFailure], Error] = Ok(
+      let outcome : Result[Result[Int32, @fuwaroid.AskFailure], Error] = Ok(
         handle.ask(T06Query::T06Count, timeout_ms=30000),
       ) catch {
         error => Err(error)
@@ -823,7 +825,7 @@ priv enum T09Cmd {
 /// 4. the cancelled handle refuses new messages fail-fast (the unified
 ///    cleanup path closed admission).
 async test "T09 accepted ask stranded by loop cancellation fails fast as Stopped" {
-  let processed : Ref[Int] = Ref(0)
+  let processed : Ref[Int32] = Ref(0)
   let handle_cell : Ref[@fuwaroid.Fuwaroid[T09Cmd, Unit, Unit]?] = Ref(None)
   let group_cell : Ref[@async.TaskGroup[Unit]?] = Ref(None)
   let backlog_enqueued : Ref[Bool] = Ref(false)
@@ -939,7 +941,7 @@ async test "T09 accepted ask stranded by loop cancellation fails fast as Stopped
 
 ///|
 priv enum T10Cmd {
-  T10Add(Int)
+  T10Add(Int32)
 }
 
 ///|
@@ -960,9 +962,9 @@ priv enum T10Query {
 /// afterwards gets the correct reply, so the interrupted ask left no
 /// state damage behind.
 async test "T10 asker cancellation propagates to the call site and the actor keeps serving" {
-  let processed : Ref[Int] = Ref(0)
+  let processed : Ref[Int32] = Ref(0)
   let ask_started : Ref[Bool] = Ref(false)
-  let ask_reply : Ref[Result[Int, @fuwaroid.AskFailure]?] = Ref(None)
+  let ask_reply : Ref[Result[Int32, @fuwaroid.AskFailure]?] = Ref(None)
   @async.with_task_group(group => {
     let handle = @fuwaroid.Fuwaroid::spawn(
       group~,
@@ -988,7 +990,7 @@ async test "T10 asker cancellation propagates to the call site and the actor kee
     // it calls `ask` and lets the signal propagate out of the task.
     let asker = group.spawn(() => {
       ask_started.val = true
-      let reply : Result[Int, @fuwaroid.AskFailure] = handle.ask(
+      let reply : Result[Int32, @fuwaroid.AskFailure] = handle.ask(
         T10Query::T10Count,
         timeout_ms=30000,
       )
@@ -1052,7 +1054,7 @@ async test "T10 asker cancellation propagates to the call site and the actor kee
 /// costs far more real time than the ask timeout below. No sleeps: the
 /// delay the timeout fires against is created by the mailbox POSITION of the
 /// query behind the slow backlog.
-fn t11_burn() -> Int {
+fn t11_burn() -> Int32 {
   let mut acc = 0
   for i in 0..<t11_burn_iters {
     acc = (acc + i) % 1000003
@@ -1071,8 +1073,8 @@ fn t11_burn() -> Int {
 /// after the timed-out one (FIFO) — returns the full count with the counter
 /// at exactly +1.
 async test "T11 ask timeout does not withdraw the request and it executes exactly once" {
-  let processed : Ref[Int] = Ref(0)
-  let query_runs : Ref[Int] = Ref(0)
+  let processed : Ref[Int32] = Ref(0)
+  let query_runs : Ref[Int32] = Ref(0)
   @async.with_task_group(group => {
     let handle = @fuwaroid.Fuwaroid::spawn(
       group~,
@@ -1092,7 +1094,7 @@ async test "T11 ask timeout does not withdraw the request and it executes exactl
     for _ in 0..<t11_backlog {
       let _ = handle.tell(1)
     }
-    let timed_out : Result[Result[Int, @fuwaroid.AskFailure], Error] = Ok(
+    let timed_out : Result[Result[Int32, @fuwaroid.AskFailure], Error] = Ok(
       handle.ask((), timeout_ms=t11_timeout_ms),
     ) catch {
       error => Err(error)
@@ -1113,7 +1115,7 @@ async test "T11 ask timeout does not withdraw the request and it executes exactl
     }
     // Fresh barrier query: served AFTER the timed-out request, so its reply
     // certifies the timed-out request's execution is already counted.
-    let barrier : Result[Result[Int, @fuwaroid.AskFailure], Error] = Ok(
+    let barrier : Result[Result[Int32, @fuwaroid.AskFailure], Error] = Ok(
       handle.ask((), timeout_ms=30000),
     ) catch {
       error => Err(error)
@@ -1132,7 +1134,7 @@ async test "T11 ask timeout does not withdraw the request and it executes exactl
 ///|
 priv enum T13Cmd {
   T13Start
-  T13Report(Int)
+  T13Report(Int32)
 }
 
 ///|
@@ -1158,7 +1160,7 @@ priv enum T13Query {
 /// 4. the ledger was not polluted by the late report: the handler-side
 ///    applied-log is empty (the report never entered the mailbox).
 async test "T13 background work reports back after close and the refusal is independently collected" {
-  let applied_log : Array[Int] = []
+  let applied_log : Array[Int32] = []
   let refusals : Array[Result[Unit, @fuwaroid.SendRefusal]] = []
   let closed_flag : Ref[Bool] = Ref(false)
   let bg_done : Ref[Bool] = Ref(false)

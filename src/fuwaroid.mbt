@@ -178,7 +178,7 @@ priv struct LoopStop {
 /// buffered); the next send is the one refused with `MailboxFull`.
 pub(all) enum Mailbox {
   Unbounded
-  Bounded(Int)
+  Bounded(Int32)
 } derive(Eq, Debug)
 
 ///|
@@ -192,7 +192,7 @@ pub extend Mailbox with @moonbitlang/core/debug.Debug::{to_repr}
 /// message for `spawn` to abort with, `None` if valid. Kept a pure,
 /// package-internal function so the white-box tests can pin the acceptance
 /// boundary directly.
-fn mailbox_capacity_error(n : Int) -> String? {
+fn mailbox_capacity_error(n : Int32) -> String? {
   if n <= 0 {
     Some(
       "Bounded mailbox capacity must be a positive integer (zero/negative capacities are rejected fail-fast, not clamped), got \{n}",
@@ -247,7 +247,7 @@ pub fn[State, Cmd, Query, Reply] Fuwaroid::spawn(
   init~ : State,
   on_cmd~ : (Ctx[Cmd, Query, Reply], State, Cmd) -> State,
   on_query~ : (Ctx[Cmd, Query, Reply], State, Query) -> (State, Reply),
-  mailbox? : Mailbox = Mailbox::Unbounded,
+  mailbox~ : Mailbox = Mailbox::Unbounded,
 ) -> Fuwaroid[Cmd, Query, Reply] {
   let kind : @aqueue.Kind = match mailbox {
     Unbounded => @aqueue.Unbounded
@@ -289,7 +289,7 @@ pub fn[State, Cmd] Fuwaroid::spawn_fold(
   group~ : @async.TaskGroup[Unit],
   init~ : State,
   on_cmd~ : (Ctx[Cmd, Unit, Unit], State, Cmd) -> State,
-  mailbox? : Mailbox = Mailbox::Unbounded,
+  mailbox~ : Mailbox = Mailbox::Unbounded,
 ) -> Fuwaroid[Cmd, Unit, Unit] {
   let kind : @aqueue.Kind = match mailbox {
     Unbounded => @aqueue.Unbounded
@@ -313,11 +313,11 @@ pub fn[State, Cmd] Fuwaroid::spawn_fold(
 
 ///|
 /// Complete messages processed between scheduler yields.
-let fuwaroid_yield_batch : Int = 64
+let fuwaroid_yield_batch : Int32 = 64
 
 ///|
 /// Stranded-message cleanup keeps the original smaller cadence.
-let fuwaroid_cleanup_yield_batch : Int = 32
+let fuwaroid_cleanup_yield_batch : Int32 = 32
 
 ///|
 #inline
@@ -614,7 +614,7 @@ fn classify_ask_error(error : Error) -> AskFailure? {
 pub async fn[Cmd, Query, Reply] Fuwaroid::ask(
   self : Fuwaroid[Cmd, Query, Reply],
   query : Query,
-  timeout_ms~ : Int,
+  timeout_ms~ : Int32,
 ) -> Result[Reply, AskFailure] {
   let reply : @aqueue.Queue[Reply] = @aqueue.Queue(kind=@aqueue.Unbounded)
   match self.admit(Envelope::Ask(query, reply)) {

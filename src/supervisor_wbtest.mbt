@@ -40,7 +40,7 @@ test "W01 forward-only transition table" {
 }
 
 ///|
-fn w_parked(park : @aqueue.Queue[Unit], value : Int) -> async () -> Int {
+fn w_parked(park : @aqueue.Queue[Unit], value : Int32) -> async () -> Int32 {
   () => {
     park.get()
     value
@@ -59,7 +59,7 @@ async test "W02 cancelled invariant: Cancelled status, reaped registry, TaskCanc
     handle.cancel()
     // An uncancelled observer must see the target task as cancelled.
     let observer = group.spawn(() => {
-      let waited : Result[Int, Error] = Ok(handle.wait()) catch {
+      let waited : Result[Int32, Error] = Ok(handle.wait()) catch {
         error => Err(error)
       }
       match waited {
@@ -83,8 +83,8 @@ priv suberror WBoom {
 
 ///|
 async test "W03 failed task records error text and keeps original propagation" {
-  let sup_cell : Ref[Supervisor[Int]?] = Ref(None)
-  let handle_cell : Ref[SupervisedTask[Int]?] = Ref(None)
+  let sup_cell : Ref[Supervisor[Int32]?] = Ref(None)
+  let handle_cell : Ref[SupervisedTask[Int32]?] = Ref(None)
   let inner : Result[Unit, Error] = Ok(
     @async.with_task_group((group : @async.TaskGroup[Unit]) => {
       let sup = Supervisor(group~)

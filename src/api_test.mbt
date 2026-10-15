@@ -28,18 +28,18 @@
 ///|
 /// The bounded capacity used by T05: small, so the loop cannot drain the
 /// window mid-turn (it cannot run during the window at all).
-let t05_capacity : Int = 1
+let t05_capacity : Int32 = 1
 
 ///|
 /// Sends per admission window: `capacity + 1` may be admitted (handoff slot
 /// + buffer, see the file comment), so one more send is guaranteed to hit
 /// the full boundary within the same turn.
-let t05_window_sends : Int = t05_capacity + 2
+let t05_window_sends : Int32 = t05_capacity + 2
 
 ///|
 /// Spin budget for the barrier retries: one pause lets the loop serve the
 /// queued message, so the barrier is admitted on the next attempt.
-let t05_spin_budget : Int = 10000
+let t05_spin_budget : Int32 = 10000
 
 ///|
 /// Bounded retry of the barrier ask until the mailbox has room for it, i.e.
@@ -48,8 +48,8 @@ let t05_spin_budget : Int = 10000
 /// the mailbox, so retrying cannot reorder or duplicate anything. Any other
 /// outcome is returned immediately for the caller to assert.
 async fn t05_barrier(
-  fuwaroid : @fuwaroid.Fuwaroid[Int, Unit, Int],
-) -> Result[Int, @fuwaroid.AskFailure] {
+  fuwaroid : @fuwaroid.Fuwaroid[Int32, Unit, Int32],
+) -> Result[Int32, @fuwaroid.AskFailure] {
   for _ in 0..<t05_spin_budget {
     match fuwaroid.ask((), timeout_ms=10000) {
       Err(
@@ -70,10 +70,10 @@ async fn t05_barrier(
 /// run between them and the outcome is decided by the queue alone. Returns
 /// the accepted commands (in order) and the refusal that ended the window.
 fn t05_admission_window(
-  fuwaroid : @fuwaroid.Fuwaroid[Int, Unit, Int],
-  first_cmd : Int,
-) -> (Array[Int], @fuwaroid.SendRefusal?) {
-  let accepted : Array[Int] = []
+  fuwaroid : @fuwaroid.Fuwaroid[Int32, Unit, Int32],
+  first_cmd : Int32,
+) -> (Array[Int32], @fuwaroid.SendRefusal?) {
+  let accepted : Array[Int32] = []
   let mut refusal : @fuwaroid.SendRefusal? = None
   for i in 0..<t05_window_sends {
     match fuwaroid.tell(first_cmd + i) {
@@ -88,7 +88,7 @@ fn t05_admission_window(
 }
 
 ///|
-fn t05_sum(commands : Array[Int]) -> Int {
+fn t05_sum(commands : Array[Int32]) -> Int32 {
   let mut total = 0
   for command in commands {
     total = total + command
@@ -110,7 +110,7 @@ fn t05_sum(commands : Array[Int]) -> Int {
 ///    same bounded boundary, and the final barrier count is the exact total.
 async test "T05 bounded full load refuses without changing accepted messages and recovers capacity" {
   @async.with_task_group(group => {
-    let fuwaroid : @fuwaroid.Fuwaroid[Int, Unit, Int] = @fuwaroid.Fuwaroid::spawn(
+    let fuwaroid : @fuwaroid.Fuwaroid[Int32, Unit, Int32] = @fuwaroid.Fuwaroid::spawn(
       group~,
       init=0,
       on_cmd=(_, state, n) => state + n,
@@ -170,7 +170,7 @@ async test "T05 bounded full load refuses without changing accepted messages and
 /// T12 command vocabulary: each command carries its ordinal so FIFO service
 /// order is observable through the handler-side `seen` log.
 priv enum T12Cmd {
-  T12Add(Int)
+  T12Add(Int32)
 }
 
 ///|
@@ -184,7 +184,7 @@ priv enum T12Cmd {
 /// tools/concurrency-api-guard.mbtx, not here.
 async test "T12 fold barrier tell-then-ask-unit proves prior processing" {
   @async.with_task_group(group => {
-    let seen : Array[Int] = []
+    let seen : Array[Int32] = []
     let fuwaroid = @fuwaroid.Fuwaroid::spawn_fold(group~, init=0, on_cmd=(
       _,
       state,

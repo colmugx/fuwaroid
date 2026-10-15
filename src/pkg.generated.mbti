@@ -60,6 +60,13 @@ pub fn Mailbox::equal(Self, Self) -> Bool
 pub fn Mailbox::not_equal(Self, Self) -> Bool
 pub fn Mailbox::to_repr(Self) -> @debug.Repr
 
+pub struct OneShot[X] {
+  // private fields
+}
+pub fn[X] OneShot::OneShot() -> Self[X]
+pub fn[X] OneShot::complete(Self[X], X) -> Result[Unit, X]
+pub async fn[X] OneShot::wait(Self[X]) -> X
+
 pub(all) enum SendRefusal {
   MailboxClosed
   MailboxFull

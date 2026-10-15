@@ -46,19 +46,19 @@ let us_per_s : Double = 1000000.0
 /// One workload run's parameters (parsed from `key=value` arguments).
 priv struct Params {
   mut mode : String
-  mut messages : Int
-  mut warmup : Int
-  mut samples : Int
-  mut hot : Int
-  mut chain : Int
-  mut producers : Int
-  mut per_producer : Int
-  mut burst : Int
+  mut messages : Int32
+  mut warmup : Int32
+  mut samples : Int32
+  mut hot : Int32
+  mut chain : Int32
+  mut producers : Int32
+  mut per_producer : Int32
+  mut burst : Int32
   mut capacity : String
-  mut burn : Int
-  mut timeout_ms : Int
-  mut producer_per_sample : Int
-  mut sample_interval_ms : Int
+  mut burn : Int32
+  mut timeout_ms : Int32
+  mut producer_per_sample : Int32
+  mut sample_interval_ms : Int32
   mut note_batch : String
   mut note : String
   /// True for `selftest`/`smoke`: ask timeouts/refusals and any conservation
@@ -92,11 +92,11 @@ fn Params::default() -> Params {
 ///|
 /// Parse a non-negative decimal integer, or None. Local helper so the bench
 /// package needs no extra core imports.
-fn parse_int_bench(s : String) -> Int? {
+fn parse_int_bench(s : String) -> Int32? {
   let mut value = 0
   let mut digits = 0
   for ch in s {
-    guard ch is ('0'..='9') else { return None }
+    guard ch is ('0'..<='9') else { return None }
     value = value * 10 + (ch.to_int() - '0'.to_int())
     digits = digits + 1
   }
@@ -361,9 +361,9 @@ fn check_conservation(
 /// Aggregate counters shared by the ask-based workloads.
 priv struct AskStats {
   samples : Array[Double]
-  mut timeouts : Int
-  mut refusals : Int
-  mut stopped : Int
+  mut timeouts : Int32
+  mut refusals : Int32
+  mut stopped : Int32
 }
 
 ///|
@@ -376,7 +376,7 @@ fn AskStats::new() -> AskStats {
 /// the latency samples (plan: 超时/拒绝单独报告).
 fn AskStats::record(
   self : AskStats,
-  r : Result[Int, @fuwaroid.AskFailure],
+  r : Result[Int32, @fuwaroid.AskFailure],
   us : Double,
   p : Params,
 ) -> Unit raise {
@@ -409,10 +409,10 @@ fn AskStats::report(self : AskStats, label : String) -> Unit {
 /// The short handler used across workloads: one integer increment. Pure
 /// arithmetic, no IO, no suspension inside the handler.
 fn short_handler(
-  _ctx : @fuwaroid.Ctx[Int, Unit, Unit],
-  state : Int,
-  _cmd : Int,
-) -> Int {
+  _ctx : @fuwaroid.Ctx[Int32, Unit, Unit],
+  state : Int32,
+  _cmd : Int32,
+) -> Int32 {
   state + 1
 }
 
@@ -420,10 +420,10 @@ fn short_handler(
 /// Command handler for instances that also serve queries (Reply = Int): the
 /// command counter still advances by one per message.
 fn query_actor_cmd(
-  _ctx : @fuwaroid.Ctx[Int, Unit, Int],
-  state : Int,
-  _cmd : Int,
-) -> Int {
+  _ctx : @fuwaroid.Ctx[Int32, Unit, Int32],
+  state : Int32,
+  _cmd : Int32,
+) -> Int32 {
   state + 1
 }
 
@@ -431,10 +431,10 @@ fn query_actor_cmd(
 /// Query handler for the cold/query-serving instance: replies with the
 /// counter value.
 fn counting_query(
-  _ctx : @fuwaroid.Ctx[Int, Unit, Int],
-  state : Int,
+  _ctx : @fuwaroid.Ctx[Int32, Unit, Int32],
+  state : Int32,
   _query : Unit,
-) -> (Int, Int) {
+) -> (Int32, Int32) {
   (state, state)
 }
 
@@ -444,9 +444,9 @@ fn counting_query(
 /// The chain lives entirely inside synchronous handlers.
 fn hot_chain_handler(
   ctx : @fuwaroid.Ctx[HotCmd, Unit, Unit],
-  state : Int,
+  state : Int32,
   _cmd : HotCmd,
-) -> Int {
+) -> Int32 {
   if state > 1 {
     let _ = ctx.address.tell(HotCmd::Chain)
   }
@@ -887,7 +887,7 @@ async fn run_producers_body(p : Params) -> Unit {
     )
     let done : Ref[Bool] = { val: false, }
     let peak : Ref[Int64] = { val: 0L, }
-    let sample_count : Ref[Int] = { val: 0, }
+    let sample_count : Ref[Int32] = { val: 0, }
     let sampler = group.spawn(() => {
       while !done.val {
         @async.sleep(p.sample_interval_ms)
@@ -898,7 +898,7 @@ async fn run_producers_body(p : Params) -> Unit {
         sample_count.val += 1
       }
     })
-    let tasks : Array[@async.Task[(Int, Int)]] = []
+    let tasks : Array[@async.Task[(Int32, Int32)]] = []
     let t0 = @clock.monotonic_clock_start()
     for _pi in 0..<p.producers {
       tasks.push(

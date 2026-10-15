@@ -42,7 +42,7 @@ pub extend SpawnRefusal with @moonbitlang/core/debug.Debug::{to_repr}
 ///|
 /// Copied diagnostic view of one supervised task.
 pub(all) struct SupervisedTaskSnapshot {
-  id : Int
+  id : Int32
   label : String
   status : SupervisedTaskStatus
   error_text : String?

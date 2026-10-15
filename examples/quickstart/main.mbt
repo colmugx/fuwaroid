@@ -29,20 +29,20 @@ async fn run_counter() -> Int {
     for amount in [2, 3] {
       match counter.tell(CounterCmd::Add(amount)) {
         Ok(_) => ()
-        Err(_) => abort("quickstart: command was not admitted"),
+        Err(_) => abort("quickstart: command was not admitted")
       }
     }
 
     match counter.ask(CounterQuery::GetCount, timeout_ms=1000) {
       Ok(count) => result.val = count
-      Err(_) => abort("quickstart: query failed"),
+      Err(_) => abort("quickstart: query failed")
     }
 
     // close() stops admission; join() confirms the accepted messages drained.
     counter.close()
     match counter.join() {
       @fuwaroid.Graceful => ()
-      _ => abort("quickstart: Fuwaroid did not stop gracefully"),
+      _ => abort("quickstart: Fuwaroid did not stop gracefully")
     }
   })
   result.val

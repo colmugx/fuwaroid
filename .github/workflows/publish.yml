@@ -1,0 +1,94 @@
+name: Publish to mooncakes.io
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+concurrency:
+  group: publish-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Validate tag and module version
+        id: version
+        shell: bash
+        run: |
+          set -euo pipefail
+          TAG="${GITHUB_REF_NAME}"
+          if [[ ! "${TAG}" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "::error::Release tag must be vMAJOR.MINOR.PATCH (e.g. v0.3.1)."
+            exit 1
+          fi
+          VERSION="${TAG#v}"
+          MODULE_VERSION="$(sed -nE 's/^[[:space:]]*version[[:space:]]*=[[:space:]]*"([^"]+)".*$/\1/p' moon.mod | head -n 1)"
+          if [[ "${MODULE_VERSION}" != "${VERSION}" ]]; then
+            echo "::error::Tag ${TAG} does not match moon.mod version ${MODULE_VERSION}."
+            exit 1
+          fi
+          echo "version=${VERSION}" >> "${GITHUB_OUTPUT}"
+
+      - name: Install MoonBit
+        run: |
+          curl -fsSL https://cli.moonbitlang.com/install/unix.sh | bash
+          echo "$HOME/.moon/bin" >> "$GITHUB_PATH"
+
+      - name: Toolchain version
+        run: |
+          moon version --all
+          moonrun --version
+
+      - name: Resolve dependencies
+        run: moon update
+
+      - name: Check (native)
+        run: moon check --target native --output-json
+
+      - name: Build (native)
+        run: moon build --target native --output-json
+
+      - name: Verify generated API
+        run: |
+          moon info --target native
+          git diff --exit-code
+
+      - name: Test (native)
+        run: moon test --target native --output-json
+
+      - name: Publish to mooncakes.io
+        env:
+          MOONCAKES_TOKEN: ${{ secrets.MOONCAKES_TOKEN }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ -z "${MOONCAKES_TOKEN}" ]]; then
+            echo "::error::Repository secret MOONCAKES_TOKEN is required for publishing."
+            exit 1
+          fi
+          umask 077
+          mkdir -p "$HOME/.moon"
+          trap 'rm -f "$HOME/.moon/credentials.json"' EXIT
+          printf '%s\n' "$MOONCAKES_TOKEN" > "$HOME/.moon/credentials.json"
+          moon publish
+
+      - name: Create GitHub release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.ref_name }}
+          name: Release ${{ github.ref_name }}
+          generate_release_notes: true
+          body: |
+            Published to [mooncakes.io](https://mooncakes.io/docs/colmugx/fuwaroid).
+
+            ```sh
+            moon add colmugx/fuwaroid@${{ steps.version.outputs.version }}
+            ```

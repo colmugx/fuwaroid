@@ -1,0 +1,6 @@
+import {
+  "colmugx/fuwaroid",
+  "moonbitlang/async",
+}
+
+pkgtype(kind: "executable")

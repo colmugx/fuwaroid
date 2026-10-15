@@ -7,6 +7,47 @@ the library owns the mailbox semantics — nothing else. The runtime
 underneath is single-threaded and cooperative: many Fuwaroids make
 **concurrent progress**, which is **not** multicore parallelism.
 
+
+## Installation
+
+Install the [MoonBit toolchain](https://www.moonbitlang.com/download), then
+add Fuwaroid and its async runtime dependency to your MoonBit project:
+
+```sh
+moon add colmugx/fuwaroid@0.3.1
+moon add moonbitlang/async@0.22.3
+```
+
+Import the packages in the consuming package's `moon.pkg`:
+
+```moonbit
+import {
+  "colmugx/fuwaroid",
+  "moonbitlang/async",
+}
+```
+
+The host creates an `@async.TaskGroup`, passes it to
+`Fuwaroid::spawn(...)`, and remains responsible for that group's lifetime.
+For a fully executable example (not a test snippet), see
+[`examples/quickstart/`](examples/quickstart/).
+
+## Run the quickstart
+
+From this repository's root:
+
+```sh
+moon -C examples/quickstart update
+moon -C examples/quickstart check --target native --output-json
+moon -C examples/quickstart test --target native --output-json
+moon -C examples/quickstart run --target native .
+```
+
+The quickstart uses a local `moon.work` to build against this checkout, so
+it needs no published Fuwaroid version or network service at runtime.
+It prints `count = 5` and demonstrates `tell`, `ask`, `close`, and `join`.
+
+
 ## Why "Fuwaroid"
 
 **ふわり (fuwari)** is the Japanese mimetic word for the way something

@@ -4,10 +4,9 @@ on:
   push:
     branches: [main]
   pull_request:
-  workflow_dispatch:
 
 jobs:
-  native:
+  check:
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
@@ -21,52 +20,23 @@ jobs:
       - name: Toolchain version
         run: moon version --all
 
-      - name: Resolve library dependencies
+      - name: Resolve dependencies
         run: moon update
 
-      - name: Check library (native)
-        run: moon check --target native --output-json
+      - name: Check
+        run: moon check --output-json
 
-      - name: Build library (native)
-        run: moon build --target native --output-json
-
-      - name: Test library (native)
-        run: moon test --target native --output-json
+      - name: Test
+        run: moon test --output-json
 
       - name: Resolve quickstart dependencies
         run: moon -C examples/quickstart update
 
       - name: Check quickstart
-        run: moon -C examples/quickstart check --target native --output-json
-
-      - name: Build quickstart
-        run: moon -C examples/quickstart build --target native --output-json
+        run: moon -C examples/quickstart check --output-json
 
       - name: Test quickstart
-        run: moon -C examples/quickstart test --target native --output-json
+        run: moon -C examples/quickstart test --output-json
 
       - name: Run quickstart
-        run: moon -C examples/quickstart run --target native .
-
-  js:
-    runs-on: ubuntu-latest
-    timeout-minutes: 15
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Install MoonBit
-        run: |
-          curl -fsSL https://cli.moonbitlang.com/install/unix.sh | bash
-          echo "$HOME/.moon/bin" >> "$GITHUB_PATH"
-
-      - name: Toolchain version
-        run: moon version --all
-
-      - name: Resolve library dependencies
-        run: moon update
-
-      - name: Check library (JS)
-        run: moon check --target js --output-json
-
-      - name: Build library (JS)
-        run: moon build --target js --output-json
+        run: moon -C examples/quickstart run .

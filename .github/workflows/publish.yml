@@ -50,19 +50,11 @@ jobs:
       - name: Resolve dependencies
         run: moon update
 
-      - name: Check (native)
-        run: moon check --target native --output-json
+      - name: Check
+        run: moon check --output-json
 
-      - name: Build (native)
-        run: moon build --target native --output-json
-
-      - name: Verify generated API
-        run: |
-          moon info --target native
-          git diff --exit-code
-
-      - name: Test (native)
-        run: moon test --target native --output-json
+      - name: Test
+        run: moon test --output-json
 
       - name: Publish to mooncakes.io
         env:

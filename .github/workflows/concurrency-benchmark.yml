@@ -4,12 +4,13 @@ on:
   workflow_dispatch:
     inputs:
       toolchain:
-        description: MoonBit toolchain (keep identical when comparing runs)
-        default: 'v0.10.15+943464bfa'
+        description: MoonBit toolchain (latest or a released version; pin for comparable runs)
+        default: 'latest'
         required: true
         type: string
   push:
     branches: [main]
+  pull_request:
 
 permissions:
   contents: read
@@ -24,10 +25,16 @@ jobs:
     timeout-minutes: 45
     steps:
       - uses: actions/checkout@v4
-      - uses: hustcer/setup-moonbit@v1.22
-        with:
-          version: ${{ inputs.toolchain || 'v0.10.15+943464bfa' }}
-          core-version: ${{ inputs.toolchain || 'v0.10.15+943464bfa' }}
+      - name: Install MoonBit (official installer)
+        shell: bash
+        env:
+          MOONBIT_TOOLCHAIN: ${{ inputs.toolchain || 'latest' }}
+        run: |
+          set -euo pipefail
+          curl -fsSL https://cli.moonbitlang.com/install/unix.sh | bash -s -- "$MOONBIT_TOOLCHAIN"
+          echo "$HOME/.moon/bin" >> "$GITHUB_PATH"
+      - name: Record installed toolchain
+        run: moon version --all
       - name: Resolve dependencies
         run: moon update
       - name: Check and test
@@ -36,7 +43,13 @@ jobs:
           moon test --target native --output-json
       - name: Measure release workloads and write report
         timeout-minutes: 25
-        run: moon run tools/concurrency-ci.mbtx --target native
+        shell: bash
+        run: |
+          if [[ "$GITHUB_EVENT_NAME" == "pull_request" ]]; then
+            moon run --target native tools/concurrency-ci.mbtx smoke
+          else
+            moon run --target native tools/concurrency-ci.mbtx
+          fi
       - name: Preserve report and raw evidence, including failures
         if: always()
         uses: actions/upload-artifact@v4

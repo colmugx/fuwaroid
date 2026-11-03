@@ -13,20 +13,20 @@ priv enum OneShotState[X] {
 /// Fuwaroid actors live on — the non-actor primitive when a caller just
 /// needs to hand ONE value to one or more waiting tasks and have every
 /// successful wait observe the same value. No mailbox, no actor, no loop:
-/// private state plus a `moonbitlang/async` `CondVar` is the whole
+/// private state plus a `moonbitlang/core/async` `Cond` is the whole
 /// mechanism.
 ///
 /// - `complete` is synchronous (a plain function — it cannot suspend by
 ///   type): it publishes the value and broadcasts, first-wins. Later
 ///   submissions are rejected with `Err` carrying the submitted value.
 /// - `wait` is async: it returns the saved value immediately once
-///   completed, otherwise parks on the CondVar. Repeated and late waits
+///   completed, otherwise parks on the Cond. Repeated and late waits
 ///   are fine; waiting never consumes the value and never copies it —
 ///   every waiter observes the same `X`.
-/// - Cancelling a waiting task removes only that waiter (the CondVar
+/// - Cancelling a waiting task removes only that waiter (the Cond
 ///   unlinks it); the cell and the other waiters are unaffected. A waiter
 ///   woken by the broadcast but cancelled before it resumes still
-///   observes the value — the CondVar's woken-then-cancelled protection
+///   observes the value — the Cond's woken-then-cancelled protection
 ///   keeps an already-delivered value from being lost.
 ///
 /// This is a cooperative-concurrency primitive INSIDE one async runtime:
@@ -89,7 +89,7 @@ pub fn[X] OneShot::complete(self : OneShot[X], value : X) -> Result[Unit, X] {
 /// still returns it.
 ///
 /// Lost-wakeup safety rests on the cooperative premise documented on
-/// `complete`: between the state check and the CondVar registration below
+/// `complete`: between the state check and the Cond registration below
 /// there is no suspension point, so a concurrent `complete` either
 /// broadcast before the registration (this loop's re-check sees
 /// `Completed`) or can only run after this waiter is already parked.

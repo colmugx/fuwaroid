@@ -1,8 +1,14 @@
 import {
-  "moonbitlang/async",
-  "moonbitlang/async/aqueue",
-  "moonbitlang/async/cond_var",
+  "moonbitlang/core/async",
+  "moonbitlang/core/async/aqueue",
+  "moonbitlang/core/async/cond_var",
   "moonbitlang/core/debug",
 }
 
 warnings = "-unused_package"
+
+options("allow-experimental-packages": [
+  "moonbitlang/core/async",
+  "moonbitlang/core/async/aqueue",
+  "moonbitlang/core/async/cond_var",
+])

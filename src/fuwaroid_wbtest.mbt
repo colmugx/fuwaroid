@@ -18,7 +18,7 @@ priv enum CounterQuery {
 
 ///|
 fn counter_fuwaroid(
-  group : @async.TaskGroup[Unit],
+  group : @async.TaskGroup,
 ) -> Fuwaroid[CounterCmd, CounterQuery, Int32] {
   Fuwaroid::spawn(
     group~,

@@ -49,7 +49,7 @@ fn w_parked(park : @aqueue.Queue[Unit], value : Int32) -> async () -> Int32 {
 
 ///|
 async test "W02 cancelled invariant: Cancelled status, reaped registry, TaskCancelled waiter" {
-  @async.with_task_group((group : @async.TaskGroup[Unit]) => {
+  @async.with_task_group((group : @async.TaskGroup) => {
     let sup = Supervisor(group~)
     let park : @aqueue.Queue[Unit] = @aqueue.Queue(kind=@aqueue.Unbounded)
     let handle = match sup.spawn(w_parked(park, 9), label="w02") {
@@ -86,7 +86,7 @@ async test "W03 failed task records error text and keeps original propagation" {
   let sup_cell : Ref[Supervisor[Int32]?] = Ref(None)
   let handle_cell : Ref[SupervisedTask[Int32]?] = Ref(None)
   let inner : Result[Unit, Error] = Ok(
-    @async.with_task_group((group : @async.TaskGroup[Unit]) => {
+    @async.with_task_group((group : @async.TaskGroup) => {
       let sup = Supervisor(group~)
       sup_cell.val = Some(sup)
       match sup.spawn(() => raise WBoom("w03-original"), label="boom") {

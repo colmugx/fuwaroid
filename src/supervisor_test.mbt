@@ -41,7 +41,7 @@ fn[T] s_describe(result : Result[T, Error]) -> String {
 ///|
 /// Successful task completes, returns its value, and leaves the live registry.
 async test "S01 successful task completes, delivers value, leaves registry" {
-  @async.with_task_group((group : @async.TaskGroup[Unit]) => {
+  @async.with_task_group((group : @async.TaskGroup) => {
     let sup = @fuwaroid.Supervisor(group~)
     let gate : @aqueue.Queue[Unit] = @aqueue.Queue(kind=@aqueue.Unbounded)
     let handle = s_spawn_ok(
@@ -75,7 +75,7 @@ async test "S02 failure propagates original error and host group semantics" {
   let sup_cell : Ref[@fuwaroid.Supervisor[Int32]?] = Ref(None)
   let handle_cell : Ref[@fuwaroid.SupervisedTask[Int32]?] = Ref(None)
   let inner : Result[Unit, Error] = Ok(
-    @async.with_task_group((group : @async.TaskGroup[Unit]) => {
+    @async.with_task_group((group : @async.TaskGroup) => {
       let sup = @fuwaroid.Supervisor(group~)
       sup_cell.val = Some(sup)
       match sup.spawn(() => raise S02Boom("original"), label="failing") {
@@ -108,7 +108,7 @@ async test "S02 failure propagates original error and host group semantics" {
 ///|
 /// Cancellation records Cancelling then Cancelled; wait sees TaskCancelled.
 async test "S03 cancel requests, worker terminates cancelled, waiter sees TaskCancelled" {
-  @async.with_task_group((group : @async.TaskGroup[Unit]) => {
+  @async.with_task_group((group : @async.TaskGroup) => {
     let sup = @fuwaroid.Supervisor(group~)
     let park : @aqueue.Queue[Unit] = @aqueue.Queue(kind=@aqueue.Unbounded)
     let handle = s_spawn_ok(sup, s_parked(park, 7), label="worker")
@@ -134,7 +134,7 @@ async test "S03 cancel requests, worker terminates cancelled, waiter sees TaskCa
 ///|
 /// Immediate cancellation is race-safe and leaves no registry leak.
 async test "S04 immediate cancellation race ends cancelled without registry leak" {
-  @async.with_task_group((group : @async.TaskGroup[Unit]) => {
+  @async.with_task_group((group : @async.TaskGroup) => {
     let sup = @fuwaroid.Supervisor(group~)
     let park : @aqueue.Queue[Unit] = @aqueue.Queue(kind=@aqueue.Unbounded)
     let handle = s_spawn_ok(sup, s_parked(park, 7), label="early")
@@ -155,7 +155,7 @@ async test "S04 immediate cancellation race ends cancelled without registry leak
 ///|
 /// Completion may beat cancellation; terminal state never moves backward.
 async test "S05 completion beats cancellation and state never moves backwards" {
-  @async.with_task_group((group : @async.TaskGroup[Unit]) => {
+  @async.with_task_group((group : @async.TaskGroup) => {
     let sup = @fuwaroid.Supervisor(group~)
     let handle = s_spawn_ok(sup, () => 42, label="quick")
     // One scheduler turn: the fully synchronous worker runs to
@@ -175,7 +175,7 @@ async test "S05 completion beats cancellation and state never moves backwards" {
 ///|
 /// Selected cancellation leaves unselected tasks running.
 async test "S06 selected cancellation leaves unselected tasks running" {
-  @async.with_task_group((group : @async.TaskGroup[Unit]) => {
+  @async.with_task_group((group : @async.TaskGroup) => {
     let sup = @fuwaroid.Supervisor(group~)
     let park_a : @aqueue.Queue[Unit] = @aqueue.Queue(kind=@aqueue.Unbounded)
     let park_b : @aqueue.Queue[Unit] = @aqueue.Queue(kind=@aqueue.Unbounded)
@@ -204,7 +204,7 @@ async test "S06 selected cancellation leaves unselected tasks running" {
 ///|
 /// Selected cancellable tasks settle before the deadline.
 async test "S07 bounded settlement succeeds before the deadline" {
-  @async.with_task_group((group : @async.TaskGroup[Unit]) => {
+  @async.with_task_group((group : @async.TaskGroup) => {
     let sup = @fuwaroid.Supervisor(group~)
     let handles : Array[@fuwaroid.SupervisedTask[Int32]] = []
     for i in 0..<3 {
@@ -231,7 +231,7 @@ async test "S07 bounded settlement succeeds before the deadline" {
 ///|
 /// DeadlineExceeded reports a protected unresolved task without reaping it.
 async test "S08 deadline exceeds a protected task, reports truth, converges after release" {
-  @async.with_task_group((group : @async.TaskGroup[Unit]) => {
+  @async.with_task_group((group : @async.TaskGroup) => {
     let sup = @fuwaroid.Supervisor(group~)
     let gate : @aqueue.Queue[Unit] = @aqueue.Queue(kind=@aqueue.Unbounded)
     let handle = s_spawn_ok(sup, s_gated(gate, 9), label="stuck")
@@ -273,7 +273,7 @@ async test "S08 deadline exceeds a protected task, reports truth, converges afte
 ///|
 /// One global deadline is not multiplied by the task count.
 async test "S09 deadline is global, not multiplied by the task count" {
-  @async.with_task_group((group : @async.TaskGroup[Unit]) => {
+  @async.with_task_group((group : @async.TaskGroup) => {
     let sup = @fuwaroid.Supervisor(group~)
     let gates : Array[@aqueue.Queue[Unit]] = []
     let handles : Array[@fuwaroid.SupervisedTask[Int32]] = []
@@ -308,7 +308,7 @@ async test "S09 deadline is global, not multiplied by the task count" {
 ///|
 /// Cancelling the settlement caller does not add target-side cancellation.
 async test "S10 caller cancellation does not cancel targets beyond the request" {
-  @async.with_task_group((group : @async.TaskGroup[Unit]) => {
+  @async.with_task_group((group : @async.TaskGroup) => {
     let sup = @fuwaroid.Supervisor(group~)
     let gate : @aqueue.Queue[Unit] = @aqueue.Queue(kind=@aqueue.Unbounded)
     let target = s_spawn_ok(sup, s_gated(gate, 4), label="target")
@@ -346,7 +346,7 @@ async test "S10 caller cancellation does not cancel targets beyond the request" 
 ///|
 /// Shutdown closes admission during and after settlement.
 async test "S11 shutdown refuses admission during and after shutdown" {
-  @async.with_task_group((group : @async.TaskGroup[Unit]) => {
+  @async.with_task_group((group : @async.TaskGroup) => {
     let sup = @fuwaroid.Supervisor(group~)
     let gate : @aqueue.Queue[Unit] = @aqueue.Queue(kind=@aqueue.Unbounded)
     let stuck = s_spawn_ok(sup, s_gated(gate, 1), label="stuck")
@@ -380,7 +380,7 @@ async test "S11 shutdown refuses admission during and after shutdown" {
 ///|
 /// Shutdown is idempotent and can retry after DeadlineExceeded.
 async test "S12 shutdown idempotence and deadline retry convergence" {
-  @async.with_task_group((group : @async.TaskGroup[Unit]) => {
+  @async.with_task_group((group : @async.TaskGroup) => {
     let sup = @fuwaroid.Supervisor(group~)
     let gate : @aqueue.Queue[Unit] = @aqueue.Queue(kind=@aqueue.Unbounded)
     let stuck = s_spawn_ok(sup, s_gated(gate, 8), label="stuck")
@@ -422,7 +422,7 @@ async test "S12 shutdown idempotence and deadline retry convergence" {
 ///|
 /// Late and concurrent waiters agree after registry reap.
 async test "S13 late and multi waiters agree after the task is reaped" {
-  @async.with_task_group((group : @async.TaskGroup[Unit]) => {
+  @async.with_task_group((group : @async.TaskGroup) => {
     let sup = @fuwaroid.Supervisor(group~)
     let handle = s_spawn_ok(sup, () => 7, label="value")
     assert_eq(handle.wait(), 7)
@@ -443,21 +443,21 @@ async test "S13 late and multi waiters agree after the task is reaped" {
 }
 
 ///|
-/// Supervisor accepts a host TaskGroup with a non-Unit result type.
-async test "S14 supervisor binds to a non-Unit host task group" {
-  let result = @async.with_task_group((group : @async.TaskGroup[String]) => {
+/// Supervisor preserves a typed child result with the Unit-valued host group.
+async test "S14 supervisor preserves typed child result with a Unit host group" {
+  let result : Ref[Int32?] = Ref(None)
+  @async.with_task_group((group : @async.TaskGroup) => {
     let sup : @fuwaroid.Supervisor[Int32] = @fuwaroid.Supervisor(group~)
-    let handle = s_spawn_ok(sup, () => 17, label="non-unit-host")
-    assert_eq(handle.wait(), 17)
-    "host-result"
+    let handle = s_spawn_ok(sup, () => 17, label="typed-child")
+    result.val = Some(handle.wait())
   })
-  assert_eq(result, "host-result")
+  assert_eq(result.val, Some(17))
 }
 
 ///|
 /// A shielded caller still observes the independent settlement deadline.
 async test "S15 shielded cancelled caller still observes settlement deadline" {
-  @async.with_task_group((group : @async.TaskGroup[Unit]) => {
+  @async.with_task_group((group : @async.TaskGroup) => {
     let sup = @fuwaroid.Supervisor(group~)
     let gate : @aqueue.Queue[Unit] = @aqueue.Queue(kind=@aqueue.Unbounded)
     let target = s_spawn_ok(sup, s_gated(gate, 5), label="shielded-target")

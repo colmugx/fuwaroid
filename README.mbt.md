@@ -1,7 +1,7 @@
 # colmugx/fuwaroid
 
 Lightweight actor-style concurrency primitives for
-[`moonbitlang/async`](https://mooncakes.io/docs/moonbitlang/async): private
+[`moonbitlang/core/async`](https://mooncakes.io/docs/moonbitlang/core/async): private
 state, a typed mailbox, and one serial loop. The host owns the lifecycle;
 the library owns the mailbox semantics — nothing else. The runtime
 underneath is single-threaded and cooperative: many Fuwaroids make
@@ -11,11 +11,11 @@ underneath is single-threaded and cooperative: many Fuwaroids make
 ## Installation
 
 Install the [MoonBit toolchain](https://www.moonbitlang.com/download), then
-add Fuwaroid and its async runtime dependency to your MoonBit project:
+add Fuwaroid to your MoonBit project. The async runtime is now part of
+`moonbitlang/core`, so no separate `moonbitlang/async` dependency is needed:
 
 ```sh
-moon add colmugx/fuwaroid@0.3.2
-moon add moonbitlang/async@0.22.5
+moon add colmugx/fuwaroid@0.4.0
 ```
 
 Import the packages in the consuming package's `moon.pkg`:
@@ -23,8 +23,10 @@ Import the packages in the consuming package's `moon.pkg`:
 ```moonbit
 import {
   "colmugx/fuwaroid",
-  "moonbitlang/async",
+  "moonbitlang/core/async",
 }
+
+options("allow-experimental-packages": ["moonbitlang/core/async"])
 ```
 
 The host creates an `@async.TaskGroup`, passes it to
@@ -272,7 +274,7 @@ async test "close then join" {
 - `join` returns the recorded `StopReason`: `Graceful` after a
   closed-and-empty drain, `Cancelled` when the host cancelled the loop,
   and `Failed(original error)` after an ordinary terminal error. In
-  `moonbitlang/async` 0.22.x cancellation is a runtime signal of its
+  `moonbitlang/core/async` cancellation is a runtime signal of its
   own, distinct from `Error` — Fuwaroid never wraps it into a fake
   error. The cancelled loop task ends cancelled (an external
   `Task::wait` observer sees `@async.WaitedTaskAlreadyCancelled`), and `join`
@@ -399,7 +401,7 @@ optional `label`, and a lifecycle status; that is the whole identity.
 
 OneShot is the primitive for handing ONE value to one or more waiting
 tasks without standing up an actor: private state plus a
-`moonbitlang/async` CondVar — no mailbox, no loop, no handler. It lives
+`moonbitlang/core/async` Cond — no mailbox, no loop, no handler. It lives
 on the same cooperative async runtime as everything else in this
 library, so it is not thread-safe and not an FFI callback target;
 external events must enter the runtime first.
@@ -562,6 +564,27 @@ says `0.1.0`); there is no compatibility layer.
 | no termination wait | `join()` returns `StopReason`; `close(); join()` confirms the drain. |
 | no diagnostics | `snapshot()` returns `Snapshot` counters. |
 
+## Migrating to 0.4.0 (`moonbitlang/core/async`)
+
+Fuwaroid 0.4.0 uses the standard-library async runtime and no longer
+depends on the standalone `moonbitlang/async` module. Imports of
+`moonbitlang/async`, `moonbitlang/async/aqueue`, and
+`moonbitlang/async/cond_var` must be replaced with their
+`moonbitlang/core/async` counterparts. Consumers can acknowledge
+the experimental core async package in their `moon.pkg` as shown above.
+
+The host's `@async.TaskGroup[Unit]` is now `@async.TaskGroup`
+(without a type argument), including in `Ctx.group`,
+`Fuwaroid::spawn`, `Fuwaroid::spawn_fold`, and
+`Supervisor::Supervisor`. The host group no longer carries a generic
+result: `with_task_group` returns `Unit`, and
+`return_immediately` no longer accepts a result value.
+Individual `@async.Task[X]` and `SupervisedTask[X]` results remain typed;
+use a result cell outside the group if the surrounding code needs a value.
+
+Cancellation, mailbox, and supervisor ownership contracts remain unchanged;
+run the concurrency tests before using the migrated library in production.
+
 ## Migrating to 0.2.0 (`moonbitlang/async` 0.22.x)
 
 0.2.0 tracks `moonbitlang/async` 0.22.x, whose cancellation is a compiler
@@ -582,7 +605,7 @@ performs queue close/drain operations and preserves the terminal
 disposition: only `QueueAlreadyClosed` is a graceful mailbox stop; a
 foreign queue error keeps its original identity as
 `StopReason::Failed(original)`, while the host's cancellation — a runtime
-signal distinct from `Error` in async 0.22.x — is recorded as
+signal distinct from `Error` in core/async — is recorded as
 `StopReason::Cancelled`, never disguised as an error. Callback
 serialization does not make generic state ownership or callback purity a
 type-enforced property.

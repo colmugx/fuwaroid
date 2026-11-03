@@ -280,7 +280,7 @@ priv enum T14Cmd {
 /// conservation holds, and a late `close` cannot regress the phase.
 async test "T14-C snapshot after abnormal stop counts abandoned and keeps conservation" {
   let handle_cell : Ref[@fuwaroid.Fuwaroid[T14Cmd, Unit, Unit]?] = Ref(None)
-  let group_cell : Ref[@async.TaskGroup[Unit]?] = Ref(None)
+  let group_cell : Ref[@async.TaskGroup?] = Ref(None)
   let backlog_enqueued : Ref[Bool] = Ref(false)
   let ask_initiated : Ref[Bool] = Ref(false)
   let ask_outcome : Ref[Result[Result[Unit, @fuwaroid.AskFailure], Error]?] = Ref(
@@ -364,7 +364,7 @@ async test "T14-C snapshot after abnormal stop counts abandoned and keeps conser
     guard group_cell.val is Some(host) else {
       fail("T14-C: host group not visible to the coordinator")
     }
-    host.return_immediately(())
+    host.return_immediately()
     // The loop stops at its first batch-yield boundary; the unified cleanup
     // counts the stranded envelopes and records the phase. join waits for
     // the loop task and returns the recorded reason.

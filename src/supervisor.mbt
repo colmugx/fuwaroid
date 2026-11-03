@@ -25,9 +25,9 @@ pub struct SupervisedTask[X] {
 }
 
 ///|
-/// Bind to a host TaskGroup of any result type.
-pub fn[G, X] Supervisor::Supervisor(
-  group~ : @async.TaskGroup[G],
+/// Bind to a host TaskGroup; individual supervised task results remain generic.
+pub fn[X] Supervisor::Supervisor(
+  group~ : @async.TaskGroup,
 ) -> Supervisor[X] {
   {
     spawn_task: fn(worker) { group.spawn(no_wait=true, worker) },
@@ -78,7 +78,7 @@ async fn[X] supervised_run(
     }
     Ok(None) => {
       supervisor_record_terminal(state, task, Cancelled)
-      // Cancellation is sticky in async 0.22.x. Re-enter an unprotected
+      // Cancellation is sticky in core/async. Re-enter an unprotected
       // cancellation point so the underlying task remains Cancelled.
       @async.pause()
       abort("fuwaroid: cancelled supervisee resumed unexpectedly")

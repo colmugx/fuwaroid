@@ -2,6 +2,7 @@
 /// bounded workloads, raw evidence retained before validating each result.
 /// Usage: moon run tools/concurrency-ci.mbtx [smoke]
 import {
+  "moonbitlang/core/async",
   "moonbitlang/core/async/fs",
   "moonbitlang/core/async/shell",
   "moonbitlang/core/env",

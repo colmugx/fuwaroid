@@ -169,7 +169,7 @@ priv struct T02State {
 /// step in the shared execution log, folds a checksum over its own
 /// sequence, and raises its completion flag on the last link.
 fn t02_hot_instance(
-  group : @async.TaskGroup[Unit],
+  group : @async.TaskGroup,
   tag : String,
   log : Array[String],
   done : Ref[Bool],
@@ -331,7 +331,7 @@ priv enum T03Cmd {
 async test "T03 cancelling a busy host stops the loop and closes admission" {
   let processed : Ref[Int32] = Ref(0)
   let handle_cell : Ref[@fuwaroid.Fuwaroid[T03Cmd, Unit, Unit]?] = Ref(None)
-  let group_cell : Ref[@async.TaskGroup[Unit]?] = Ref(None)
+  let group_cell : Ref[@async.TaskGroup?] = Ref(None)
   @async.with_task_group(outer => {
     // Host owner task: creates the host group and the actor, triggers the
     // chain, then parks. It is cancelled from outside by the observer.
@@ -375,7 +375,7 @@ async test "T03 cancelling a busy host stops the loop and closes admission" {
     guard handle_cell.val is Some(handle) else {
       fail("T03: handle not visible to the observer")
     }
-    host.return_immediately(())
+    host.return_immediately()
     // with_task_group returns only after every child of the host group has
     // terminated — including the cancelled actor loop and the cancelled
     // group body. The cancellation of those children is not a group

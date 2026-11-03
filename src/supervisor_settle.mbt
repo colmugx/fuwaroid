@@ -51,6 +51,7 @@ pub async fn[X] Supervisor::cancel_and_wait(
     return DeadlineExceeded(supervisor_snapshots(unresolved))
   }
 
+  let outcome : Ref[SettleOutcome?] = Ref(None)
   @async.with_task_group(group => {
     let events : @aqueue.Queue[SettleEvent] = @aqueue.Queue(
       kind=@aqueue.Unbounded,
@@ -77,7 +78,7 @@ pub async fn[X] Supervisor::cancel_and_wait(
       let _ = events.try_put(Deadline)
     })
 
-    settle~: {
+    let settled = settle~: {
       let mut settled = 0
       while true {
         match events.get() {
@@ -98,7 +99,12 @@ pub async fn[X] Supervisor::cancel_and_wait(
       }
       abort("fuwaroid: settlement loop exited without outcome")
     }
+    outcome.val = Some(settled)
   })
+  match outcome.val {
+    Some(result) => result
+    None => abort("fuwaroid: settlement group completed without outcome")
+  }
 }
 
 ///|

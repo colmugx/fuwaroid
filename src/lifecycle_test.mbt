@@ -827,7 +827,7 @@ priv enum T09Cmd {
 async test "T09 accepted ask stranded by loop cancellation fails fast as Stopped" {
   let processed : Ref[Int32] = Ref(0)
   let handle_cell : Ref[@fuwaroid.Fuwaroid[T09Cmd, Unit, Unit]?] = Ref(None)
-  let group_cell : Ref[@async.TaskGroup[Unit]?] = Ref(None)
+  let group_cell : Ref[@async.TaskGroup?] = Ref(None)
   let backlog_enqueued : Ref[Bool] = Ref(false)
   let ask_initiated : Ref[Bool] = Ref(false)
   let ask_outcome : Ref[Result[Result[Unit, @fuwaroid.AskFailure], Error]?] = Ref(
@@ -891,7 +891,7 @@ async test "T09 accepted ask stranded by loop cancellation fails fast as Stopped
     guard group_cell.val is Some(host) else {
       fail("T09: host group not visible to the coordinator")
     }
-    host.return_immediately(())
+    host.return_immediately()
     // The loop is cancelled at a batch-yield boundary; its cleanup path
     // fails the stranded ask. Wait for the asker to record the outcome.
     let mut settled = false

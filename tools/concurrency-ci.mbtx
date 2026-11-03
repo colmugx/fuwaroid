@@ -2,10 +2,10 @@
 /// bounded workloads, raw evidence retained before validating each result.
 /// Usage: moon run tools/concurrency-ci.mbtx [smoke]
 import {
-  "moonbitlang/async",
-  "moonbitlang/async/fs",
-  "moonbitlang/async/process",
-  "moonbitlang/async/shell",
+  "moonbitlang/core/async",
+  "moonbitlang/core/async/fs",
+  "moonbitlang/core/async/process",
+  "moonbitlang/core/async/shell",
   "moonbitlang/core/env",
   "moonbitlang/core/string",
 }
@@ -39,9 +39,9 @@ async fn command(program : String, args : Array[String]) -> String {
 
 ///|
 async fn persist(report : String) -> Unit {
-  @fs.write_file("benchmark-results/report.md", report)
+  @fs.write_text("benchmark-results/report.md", report)
   match @env.get_env_var("GITHUB_STEP_SUMMARY") {
-    Some(path) => @fs.write_file(path, report)
+    Some(path) => @fs.write_text(path, report)
     None => () // Local execution has no GitHub summary file.
   }
 }
@@ -49,23 +49,28 @@ async fn persist(report : String) -> Unit {
 ///|
 async fn execute(name : String, args : Array[String]) -> String {
   let base = "benchmark-results/\{name}"
-  @fs.write_file(base + ".command.txt", "_build/native/release/build/bench/bench.exe " + args.join(" "))
-  let stdout = @process.redirect_to_file(base + ".stdout.txt")
-  let stderr = @process.redirect_to_file(base + ".stderr.txt")
+  @fs.write_text(base + ".command.txt", "_build/native/release/build/bench/bench.exe " + args.join(" "))
   let result : Result[Int, Error] = Ok(@async.with_timeout(120000, () => {
-    @process.run("./_build/native/release/build/bench/bench.exe", args[:], stdout~, stderr~, cancel_handler=@process.hard_cancel())
+    let completed = @process.run(
+      "./_build/native/release/build/bench/bench.exe",
+      args[:],
+      stdout=@process.ToFile(base + ".stdout.txt"),
+      stderr=@process.ToFile(base + ".stderr.txt"),
+      cancel_handler=@process.hard_cancel(),
+    )
+    completed.exit_code
   })) catch { error => Err(error) }
   match result {
     Err(error) => {
-      @fs.write_file(base + ".status.txt", "FAILED: \{error}")
+      @fs.write_text(base + ".status.txt", "FAILED: \{error}")
       raise error
     }
     Ok(code) => {
-      @fs.write_file(base + ".status.txt", "exit_code: \{code}")
+      @fs.write_text(base + ".status.txt", "exit_code: \{code}")
       guard code == 0 else { fail("\{name}: exit \{code}; see raw stderr") }
     }
   }
-  let output = @fs.read_file(base + ".stdout.txt").text()
+  let output = @fs.read_text(base + ".stdout.txt")
   guard output.contains("conservation[") && !output.contains("SKIPPED") else {
     fail("\{name}: missing or skipped conservation evidence")
   }
@@ -116,18 +121,18 @@ async fn main {
       environment <+ "\{command(program, argv)}\n"
     }
     if @fs.exists("/proc/cpuinfo") {
-      environment <+ "\{@fs.read_file("/proc/cpuinfo").text()}"
-      environment <+ "\{@fs.read_file("/proc/meminfo").text()}"
+      environment <+ "\{@fs.read_text("/proc/cpuinfo")}"
+      environment <+ "\{@fs.read_text("/proc/meminfo")}"
     }
     for key in ["GITHUB_SHA", "GITHUB_RUN_ID", "GITHUB_RUN_ATTEMPT", "RUNNER_OS", "RUNNER_ARCH", "ImageOS", "ImageVersion"] {
       if @env.get_env_var(key) is Some(value) { environment <+ "\{key}: \{value}\n" }
     }
-    environment <+ "\nmoon.mod:\n\{@fs.read_file("moon.mod").text()}"
-    @fs.write_file("benchmark-results/environment.txt", environment.to_string())
+    environment <+ "\nmoon.mod:\n\{@fs.read_text("moon.mod")}"
+    @fs.write_text("benchmark-results/environment.txt", environment.to_string())
     // The resolved dependency graph is evidence, not just the declared pin.
-    @fs.write_file("benchmark-results/dependencies.txt", command("moon", ["tree"]))
+    @fs.write_text("benchmark-results/dependencies.txt", command("moon", ["tree"]))
     report <+ "Environment and resolved dependencies: `environment.txt`, `dependencies.txt`.\n\n"
-    @fs.write_file("benchmark-results/build.txt", command("moon", ["build", "src/bench", "--target", "native", "--release", "--output-json"]))
+    @fs.write_text("benchmark-results/build.txt", command("moon", ["build", "src/bench", "--target", "native", "--release", "--output-json"]))
     let _ = execute("smoke", ["smoke"])
     let values : Map[String, Array[Double]] = Map([])
     for scenario in scenarios { values[scenario.name] = [] }

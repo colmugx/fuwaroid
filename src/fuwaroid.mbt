@@ -1,5 +1,5 @@
 ///|
-/// Single-writer concurrency over `moonbitlang/async`: private state, a
+/// Single-writer concurrency over `moonbitlang/core/async`: private state, a
 /// typed mailbox, one serial loop. A Fuwaroid is a light entity that
 /// floats suspended until a message arrives, settles it in one
 /// synchronous step, and drifts back to sleep — no OS threads, no locks,
@@ -62,7 +62,7 @@ pub enum Envelope[Cmd, Query, Reply] {
 pub struct Ctx[Cmd, Query, Reply] {
   /// Host task group — spawn async side work here; it outlives the
   /// message that started it but not the host.
-  group : @async.TaskGroup[Unit]
+  group : @async.TaskGroup
   /// This Fuwaroid's address. Use `tell` only. A handler is a SYNCHRONOUS
   /// function, so calling the async `ask` from inside a handler is already
   /// a compile error (E4149): the classic self-ask scenario — the loop busy
@@ -113,7 +113,7 @@ pub extend AskFailure with @moonbitlang/core/debug.Debug::{to_repr}
 /// - `Graceful`: `close` was requested and the closed-and-empty drain
 ///   completed.
 /// - `Cancelled`: the host (task group) cancelled the loop. In
-///   `moonbitlang/async` 0.22.x cancellation is a distinct runtime signal,
+///   `moonbitlang/core/async` cancellation is a distinct runtime signal,
 ///   NOT an `Error` value, so it is reported as its own constructor —
 ///   the loop never fabricates an error to stand in for it.
 /// - `Failed(Error)`: an ordinary terminal error (e.g. a foreign mailbox
@@ -243,7 +243,7 @@ fn[Cmd, Query, Reply] Fuwaroid::admit(
 /// capacity+1 admission window); an invalid `Bounded` capacity aborts
 /// synchronously here — spawn stays a non-raising API.
 pub fn[State, Cmd, Query, Reply] Fuwaroid::spawn(
-  group~ : @async.TaskGroup[Unit],
+  group~ : @async.TaskGroup,
   init~ : State,
   on_cmd~ : (Ctx[Cmd, Query, Reply], State, Cmd) -> State,
   on_query~ : (Ctx[Cmd, Query, Reply], State, Query) -> (State, Reply),
@@ -286,7 +286,7 @@ pub fn[State, Cmd, Query, Reply] Fuwaroid::spawn(
 /// (The legacy `ask(cmd)` barrier misuse is now a compile error: the
 /// query type is `Unit`.)
 pub fn[State, Cmd] Fuwaroid::spawn_fold(
-  group~ : @async.TaskGroup[Unit],
+  group~ : @async.TaskGroup,
   init~ : State,
   on_cmd~ : (Ctx[Cmd, Unit, Unit], State, Cmd) -> State,
   mailbox~ : Mailbox = Mailbox::Unbounded,

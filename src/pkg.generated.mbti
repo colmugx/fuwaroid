@@ -2,8 +2,8 @@
 package "colmugx/fuwaroid"
 
 import {
-  "moonbitlang/async",
-  "moonbitlang/async/aqueue",
+  "moonbitlang/core/async",
+  "moonbitlang/core/async/aqueue",
   "moonbitlang/core/debug",
 }
 
@@ -15,17 +15,18 @@ pub(all) suberror StoppedError {
 }
 
 // Types and methods
+#derive(Eq, @debug.Debug)
 pub(all) enum AskFailure {
   NotDelivered(SendRefusal)
   TimedOut
   Stopped
-} derive(Eq, @debug.Debug)
+}
 pub fn AskFailure::equal(Self, Self) -> Bool
 pub fn AskFailure::not_equal(Self, Self) -> Bool
 pub fn AskFailure::to_repr(Self) -> @debug.Repr
 
 pub struct Ctx[Cmd, Query, Reply] {
-  group : @async.TaskGroup[Unit]
+  group : @async.TaskGroup
   address : Fuwaroid[Cmd, Query, Reply]
 }
 
@@ -37,25 +38,27 @@ pub enum Envelope[Cmd, Query, Reply] {
 pub struct Fuwaroid[Cmd, Query, Reply] {
   // private fields
 }
-pub async fn[Cmd, Query, Reply] Fuwaroid::ask(Self[Cmd, Query, Reply], Query, timeout_ms~ : Int) -> Result[Reply, AskFailure]
+pub async fn[Cmd, Query, Reply] Fuwaroid::ask(Self[Cmd, Query, Reply], Query, timeout_ms~ : Int32) -> Result[Reply, AskFailure]
 pub fn[Cmd, Query, Reply] Fuwaroid::close(Self[Cmd, Query, Reply]) -> Unit
 pub async fn[Cmd, Query, Reply] Fuwaroid::join(Self[Cmd, Query, Reply]) -> StopReason
 pub fn[Cmd, Query, Reply] Fuwaroid::snapshot(Self[Cmd, Query, Reply]) -> Snapshot
-pub fn[State, Cmd, Query, Reply] Fuwaroid::spawn(group~ : @async.TaskGroup[Unit], init~ : State, on_cmd~ : (Ctx[Cmd, Query, Reply], State, Cmd) -> State, on_query~ : (Ctx[Cmd, Query, Reply], State, Query) -> (State, Reply), mailbox? : Mailbox) -> Self[Cmd, Query, Reply]
-pub fn[State, Cmd] Fuwaroid::spawn_fold(group~ : @async.TaskGroup[Unit], init~ : State, on_cmd~ : (Ctx[Cmd, Unit, Unit], State, Cmd) -> State, mailbox? : Mailbox) -> Self[Cmd, Unit, Unit]
+pub fn[State, Cmd, Query, Reply] Fuwaroid::spawn(group~ : @async.TaskGroup, init~ : State, on_cmd~ : (Ctx[Cmd, Query, Reply], State, Cmd) -> State, on_query~ : (Ctx[Cmd, Query, Reply], State, Query) -> (State, Reply), mailbox? : Mailbox) -> Self[Cmd, Query, Reply]
+pub fn[State, Cmd] Fuwaroid::spawn_fold(group~ : @async.TaskGroup, init~ : State, on_cmd~ : (Ctx[Cmd, Unit, Unit], State, Cmd) -> State, mailbox? : Mailbox) -> Self[Cmd, Unit, Unit]
 pub fn[Cmd, Query, Reply] Fuwaroid::tell(Self[Cmd, Query, Reply], Cmd) -> Result[Unit, SendRefusal]
 
+#derive(@debug.Debug)
 pub(all) enum Lifecycle {
   Running
   Closing
   Stopped(StopReason)
-} derive(@debug.Debug)
+}
 pub fn Lifecycle::to_repr(Self) -> @debug.Repr
 
+#derive(Eq, @debug.Debug)
 pub(all) enum Mailbox {
   Unbounded
-  Bounded(Int)
-} derive(Eq, @debug.Debug)
+  Bounded(Int32)
+}
 pub fn Mailbox::equal(Self, Self) -> Bool
 pub fn Mailbox::not_equal(Self, Self) -> Bool
 pub fn Mailbox::to_repr(Self) -> @debug.Repr
@@ -67,22 +70,25 @@ pub fn[X] OneShot::OneShot() -> Self[X]
 pub fn[X] OneShot::complete(Self[X], X) -> Result[Unit, X]
 pub async fn[X] OneShot::wait(Self[X]) -> X
 
+#derive(Eq, @debug.Debug)
 pub(all) enum SendRefusal {
   MailboxClosed
   MailboxFull
-} derive(Eq, @debug.Debug)
+}
 pub fn SendRefusal::equal(Self, Self) -> Bool
 pub fn SendRefusal::not_equal(Self, Self) -> Bool
 pub fn SendRefusal::to_repr(Self) -> @debug.Repr
 
+#derive(Eq, @debug.Debug)
 pub(all) enum SettleOutcome {
   Settled
   DeadlineExceeded(Array[SupervisedTaskSnapshot])
-} derive(Eq, @debug.Debug)
+}
 pub fn SettleOutcome::equal(Self, Self) -> Bool
 pub fn SettleOutcome::not_equal(Self, Self) -> Bool
 pub fn SettleOutcome::to_repr(Self) -> @debug.Repr
 
+#derive(@debug.Debug)
 pub(all) struct Snapshot {
   lifecycle : Lifecycle
   accepted : Int64
@@ -91,21 +97,23 @@ pub(all) struct Snapshot {
   rejected_closed : Int64
   abandoned : Int64
   outstanding : Int64
-} derive(@debug.Debug)
+}
 pub fn Snapshot::to_repr(Self) -> @debug.Repr
 
+#derive(Eq, @debug.Debug)
 pub(all) enum SpawnRefusal {
   SupervisorClosed
-} derive(Eq, @debug.Debug)
+}
 pub fn SpawnRefusal::equal(Self, Self) -> Bool
 pub fn SpawnRefusal::not_equal(Self, Self) -> Bool
 pub fn SpawnRefusal::to_repr(Self) -> @debug.Repr
 
+#derive(@debug.Debug)
 pub(all) enum StopReason {
   Graceful
   Cancelled
   Failed(Error)
-} derive(@debug.Debug)
+}
 pub fn StopReason::to_repr(Self) -> @debug.Repr
 
 pub struct SupervisedTask[X] {
@@ -115,23 +123,25 @@ pub fn[X] SupervisedTask::cancel(Self[X]) -> Unit
 pub fn[X] SupervisedTask::snapshot(Self[X]) -> SupervisedTaskSnapshot
 pub async fn[X] SupervisedTask::wait(Self[X]) -> X
 
+#derive(Eq, @debug.Debug)
 pub(all) struct SupervisedTaskSnapshot {
-  id : Int
+  id : Int32
   label : String
   status : SupervisedTaskStatus
   error_text : String?
-} derive(Eq, @debug.Debug)
+}
 pub fn SupervisedTaskSnapshot::equal(Self, Self) -> Bool
 pub fn SupervisedTaskSnapshot::not_equal(Self, Self) -> Bool
 pub fn SupervisedTaskSnapshot::to_repr(Self) -> @debug.Repr
 
+#derive(Eq, @debug.Debug)
 pub(all) enum SupervisedTaskStatus {
   Running
   Cancelling
   Completed
   Cancelled
   Failed
-} derive(Eq, @debug.Debug)
+}
 pub fn SupervisedTaskStatus::equal(Self, Self) -> Bool
 pub fn SupervisedTaskStatus::not_equal(Self, Self) -> Bool
 pub fn SupervisedTaskStatus::to_repr(Self) -> @debug.Repr
@@ -139,25 +149,27 @@ pub fn SupervisedTaskStatus::to_repr(Self) -> @debug.Repr
 pub struct Supervisor[X] {
   // private fields
 }
-pub fn[G, X] Supervisor::Supervisor(group~ : @async.TaskGroup[G]) -> Self[X]
-pub async fn[X] Supervisor::cancel_and_wait(Self[X], tasks~ : ArrayView[SupervisedTask[X]], timeout_ms~ : Int) -> SettleOutcome
-pub async fn[X] Supervisor::shutdown(Self[X], timeout_ms~ : Int) -> SettleOutcome
+pub fn[X] Supervisor::Supervisor(group~ : @async.TaskGroup) -> Self[X]
+pub async fn[X] Supervisor::cancel_and_wait(Self[X], tasks~ : ArrayView[SupervisedTask[X]], timeout_ms~ : Int32) -> SettleOutcome
+pub async fn[X] Supervisor::shutdown(Self[X], timeout_ms~ : Int32) -> SettleOutcome
 pub fn[X] Supervisor::snapshot(Self[X]) -> SupervisorSnapshot
 pub fn[X] Supervisor::spawn(Self[X], async () -> X, label? : String) -> Result[SupervisedTask[X], SpawnRefusal]
 
+#derive(Eq, @debug.Debug)
 pub(all) enum SupervisorLifecycle {
   Open
   Closing
   Closed
-} derive(Eq, @debug.Debug)
+}
 pub fn SupervisorLifecycle::equal(Self, Self) -> Bool
 pub fn SupervisorLifecycle::not_equal(Self, Self) -> Bool
 pub fn SupervisorLifecycle::to_repr(Self) -> @debug.Repr
 
+#derive(Eq, @debug.Debug)
 pub(all) struct SupervisorSnapshot {
   lifecycle : SupervisorLifecycle
   tasks : Array[SupervisedTaskSnapshot]
-} derive(Eq, @debug.Debug)
+}
 pub fn SupervisorSnapshot::equal(Self, Self) -> Bool
 pub fn SupervisorSnapshot::not_equal(Self, Self) -> Bool
 pub fn SupervisorSnapshot::to_repr(Self) -> @debug.Repr

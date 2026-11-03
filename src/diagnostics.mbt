@@ -6,11 +6,12 @@
 /// `Stopped` carries the recorded `StopReason` after cleanup. The phase never moves
 /// backwards: a late `close` cannot un-stop an instance, and a second
 /// `close` cannot leave `Closing` once `Stopped` was reached.
+#derive(Debug)
 pub(all) enum Lifecycle {
   Running
   Closing
   Stopped(StopReason)
-} derive(Debug)
+}
 
 ///|
 pub extend Lifecycle with @moonbitlang/core/debug.Debug::{to_repr}
@@ -51,6 +52,7 @@ pub extend Lifecycle with @moonbitlang/core/debug.Debug::{to_repr}
 /// admissions the cooperative runtime would have exhausted every
 /// realizable resource long before, and per-increment checked arithmetic
 /// on the message hot path is not worth its cost.
+#derive(Debug)
 pub(all) struct Snapshot {
   lifecycle : Lifecycle
   accepted : Int64
@@ -59,7 +61,7 @@ pub(all) struct Snapshot {
   rejected_closed : Int64
   abandoned : Int64
   outstanding : Int64
-} derive(Debug)
+}
 
 ///|
 pub extend Snapshot with @moonbitlang/core/debug.Debug::{to_repr}

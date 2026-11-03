@@ -73,10 +73,11 @@ pub struct Ctx[Cmd, Query, Reply] {
 
 ///|
 /// Why a `tell` was not accepted.
+#derive(Eq, Debug)
 pub(all) enum SendRefusal {
   MailboxClosed
   MailboxFull
-} derive(Eq, Debug)
+}
 
 ///|
 pub extend SendRefusal with Eq::{equal, not_equal}
@@ -86,6 +87,7 @@ pub extend SendRefusal with @moonbitlang/core/debug.Debug::{to_repr}
 
 ///|
 /// Why an `ask` did not produce a reply.
+#derive(Eq, Debug)
 pub(all) enum AskFailure {
   /// The request never entered the mailbox.
   NotDelivered(SendRefusal)
@@ -96,7 +98,7 @@ pub(all) enum AskFailure {
   /// The loop stopped abnormally (host cancellation) while this request
   /// was queued; its reply queue was closed by the drain.
   Stopped
-} derive(Eq, Debug)
+}
 
 ///|
 pub extend AskFailure with Eq::{equal, not_equal}
@@ -118,11 +120,12 @@ pub extend AskFailure with @moonbitlang/core/debug.Debug::{to_repr}
 ///   the loop never fabricates an error to stand in for it.
 /// - `Failed(Error)`: an ordinary terminal error (e.g. a foreign mailbox
 ///   error); the ORIGINAL error identity is kept, never a compressed copy.
+#derive(Debug)
 pub(all) enum StopReason {
   Graceful
   Cancelled
   Failed(Error)
-} derive(Debug)
+}
 
 ///|
 pub extend StopReason with @moonbitlang/core/debug.Debug::{to_repr}
@@ -176,10 +179,11 @@ priv struct LoopStop {
 /// buffer. One uninterrupted producer turn can therefore admit up to
 /// `capacity + 1` messages in flight (1 handoff slot + `capacity`
 /// buffered); the next send is the one refused with `MailboxFull`.
+#derive(Eq, Debug)
 pub(all) enum Mailbox {
   Unbounded
   Bounded(Int32)
-} derive(Eq, Debug)
+}
 
 ///|
 pub extend Mailbox with Eq::{equal, not_equal}

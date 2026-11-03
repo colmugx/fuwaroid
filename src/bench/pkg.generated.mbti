@@ -6,7 +6,8 @@ package "colmugx/fuwaroid/bench"
 // Errors
 
 // Types and methods
-type HotCmd derive(Eq)
+#derive(Eq)
+type HotCmd
 
 // Type aliases
 

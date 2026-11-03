@@ -454,9 +454,10 @@ fn hot_chain_handler(
 }
 
 ///|
+#derive(Eq)
 enum HotCmd {
   Chain
-} derive(Eq)
+}
 
 ///|
 /// Tiny end-to-end self-check on the REAL counting path: a small tell budget

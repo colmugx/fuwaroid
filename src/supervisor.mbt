@@ -26,9 +26,7 @@ pub struct SupervisedTask[X] {
 
 ///|
 /// Bind to a host TaskGroup; individual supervised task results remain generic.
-pub fn[X] Supervisor::Supervisor(
-  group~ : @async.TaskGroup,
-) -> Supervisor[X] {
+pub fn[X] Supervisor::Supervisor(group~ : @async.TaskGroup) -> Supervisor[X] {
   {
     spawn_task: fn(worker) { group.spawn(no_wait=true, worker) },
     state: { next_id: 1, lifecycle: Open, live: [], },

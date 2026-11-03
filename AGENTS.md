@@ -45,10 +45,13 @@
 
 ## Tool entries (`.mbtx` script mode)
 
-- `.github/workflows/concurrency-benchmark.yml` runs on manual dispatch and
-  pushes to `main` on Ubuntu 24.04. `moon run tools/concurrency-ci.mbtx`
+- `.github/workflows/concurrency-benchmark.yml` runs on pull requests
+  (smoke), manual dispatch (full), and pushes to `main` (full) on Ubuntu 24.04.
+  MoonBit is installed via its official Unix installer; manual dispatch can
+  select a released toolchain version for comparable runs (the default `latest`
+  moves over time). `moon run --target native tools/concurrency-ci.mbtx`
   builds the native release bench and runs eight scenarios five times in
-  serial fresh processes; `[smoke]` reduces budgets for wiring validation.
+  serial fresh processes; `smoke` reduces budgets for wiring validation.
   Results and partial-failure evidence go to `benchmark-results/` and the
   GitHub step summary/artifact. Never overwrite an existing campaign directory.
   The workflow has a 45-minute job deadline and each benchmark process has a

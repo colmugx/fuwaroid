@@ -54,8 +54,8 @@ async fn execute(name : String, args : Array[String]) -> String {
     let completed = @process.run(
       "./_build/native/release/build/bench/bench.exe",
       args[:],
-      stdout=ToFile(base + ".stdout.txt"),
-      stderr=ToFile(base + ".stderr.txt"),
+      stdout=@process.ProcessOutput::ToFile(base + ".stdout.txt"),
+      stderr=@process.ProcessOutput::ToFile(base + ".stderr.txt"),
       cancel_handler=@process.hard_cancel(),
     )
     completed.exit_code

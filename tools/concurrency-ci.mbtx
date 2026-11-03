@@ -2,9 +2,7 @@
 /// bounded workloads, raw evidence retained before validating each result.
 /// Usage: moon run tools/concurrency-ci.mbtx [smoke]
 import {
-  "moonbitlang/core/async",
   "moonbitlang/core/async/fs",
-  "moonbitlang/core/async/process",
   "moonbitlang/core/async/shell",
   "moonbitlang/core/env",
   "moonbitlang/core/string",
@@ -50,16 +48,16 @@ async fn persist(report : String) -> Unit {
 async fn execute(name : String, args : Array[String]) -> String {
   let base = "benchmark-results/\{name}"
   @fs.write_text(base + ".command.txt", "_build/native/release/build/bench/bench.exe " + args.join(" "))
-  let result : Result[Int, Error] = Ok(@async.with_timeout(120000, () => {
-    let completed = @process.run(
+  let result : Result[Int, Error] = Ok({
+    let output = @shell.Cmd(
       "./_build/native/release/build/bench/bench.exe",
       args[:],
-      stdout=@process.ProcessOutput::ToFile(base + ".stdout.txt"),
-      stderr=@process.ProcessOutput::ToFile(base + ".stderr.txt"),
-      cancel_handler=@process.hard_cancel(),
-    )
-    completed.exit_code
-  })) catch { error => Err(error) }
+    ).output(timeout_ms=120000)
+    // Preserve both streams before inspecting the process exit code.
+    @fs.write_text(base + ".stdout.txt", output.stdout())
+    @fs.write_text(base + ".stderr.txt", output.stderr())
+    output.exit_code()
+  }) catch { error => Err(error) }
   match result {
     Err(error) => {
       @fs.write_text(base + ".status.txt", "FAILED: \{error}")
